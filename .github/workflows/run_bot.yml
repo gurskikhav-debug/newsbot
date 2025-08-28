@@ -1,0 +1,45 @@
+name: 🤖 Запуск новостного бота
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # Каждые 6 часов
+  workflow_dispatch:         # Можно запустить вручную
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Получить код
+        uses: actions/checkout@v4
+
+      - name: 🐍 Установить Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Установить зависимости
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🔐 Загрузить кеш новостей
+        uses: actions/cache@v3
+        id: cache-news
+        with:
+          path: cache/news_cache.json
+          key: news-cache-v1
+
+      - name: 🏃 Запустить бота
+        env:
+          TOKEN: ${{ secrets.TOKEN }}
+          NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+        run: python bot.py
+
+      - name: 💾 Сохранить кеш новостей
+        if: steps.cache-news.outputs.cache-hit != 'true'
+        uses: actions/cache@v3
+        with:
+          path: cache/news_cache.json
+          key: news-cache-v1
