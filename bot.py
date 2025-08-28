@@ -8,7 +8,7 @@ import feedparser
 # --- Настройки ---
 TOKEN = os.getenv("TOKEN")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
-ADMIN_ID = os.getenv("ADMIN_ID")  # Должен быть числом
+ADMIN_ID = os.getenv("ADMIN_ID")
 
 # --- Кеш ---
 CACHE_FILE = "cache/news_cache.json"
@@ -166,11 +166,8 @@ def main():
         # Убираем дубли
         articles = [a for a in filtered_articles if a.get('url') not in seen_urls]
 
-        # Ограничиваем 10–20
-        if len(articles) < 10:
-            selected = articles
-        else:
-            selected = articles[:20]
+        # Ограничиваем 20 новостями
+        selected = articles[:20]
 
         print(f"Отправляем: {len(selected)} новостей")
 
@@ -178,22 +175,25 @@ def main():
             print("Нет новых новостей для отправки.")
             return
 
-        # Формируем сообщение
+        # Отправляем по 5 новостей в сообщении
+        batch_size = 5
         msg = "📬 *Ежедневный дайджест*\n\n"
-        for art in selected:
+        for i, art in enumerate(selected, 1):
             title_ru = translate_text(art['title'])
             source = art.get('source', 'Неизвестно')
             msg += f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}\n\n"
 
-        # Отправляем админу
-        if ADMIN_ID:
-            try:
-                admin_id_int = int(ADMIN_ID)  # Убедимся, что это число
-                send_message(admin_id_int, msg, disable_preview=False)
-            except ValueError:
-                print(f"❌ ADMIN_ID '{ADMIN_ID}' не является числом")
-        else:
-            print("❌ ADMIN_ID не задан")
+            if i % batch_size == 0 or i == len(selected):
+                # Отправляем порцию
+                if ADMIN_ID:
+                    try:
+                        admin_id_int = int(ADMIN_ID)
+                        send_message(admin_id_int, msg, disable_preview=False)
+                    except ValueError:
+                        print(f"❌ ADMIN_ID '{ADMIN_ID}' не является числом")
+                msg = ""  # Сбрасываем для следующей порции
+                if i != len(selected):
+                    msg = "\n"  # Начинаем новую
 
         # Обновляем кеш
         for art in selected:
