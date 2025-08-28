@@ -1,5 +1,4 @@
 python-telegram-bot==21.0
 requests
 feedparser
-fpdf
 deep-translator>=1.11.3

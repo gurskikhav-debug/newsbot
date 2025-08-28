@@ -4,17 +4,11 @@ import requests
 from datetime import datetime
 from deep_translator import GoogleTranslator
 import feedparser
-from fpdf import FPDF
-from telegram import Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 # --- Настройки ---
 TOKEN = os.getenv("TOKEN")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
-ADMIN_ID = os.getenv("ADMIN_ID")
-
-# --- Состояния ---
-AWAITING_KEYWORDS = "awaiting_keywords"
+ADMIN_ID = os.getenv("ADMIN_ID")  # Ваш Telegram ID
 
 # --- Кеш ---
 CACHE_FILE = "cache/news_cache.json"
@@ -42,22 +36,75 @@ def translate_text(text):
         print(f"Ошибка перевода: {e}")
         return text
 
+# --- Ключевые слова (на русском и английском) ---
+KEYWORDS_RU = [
+    'черная металлургия', 'цветная металлургия', 'промышленные технологии',
+    'обработка металлов', 'новые технологии', 'аналитика металлургии',
+    'обзоры рынка', 'производство металлов', 'производство стали',
+    'порошковая металлургия', 'аддитивные технологии', '3D-печать металлом',
+    'редкоземельные металлы', 'РЗМ -рынок', 'тугоплавкие металлы',
+    'вольфрам', 'молибден', 'ниобий', 'тантал', 'титан', 'ванадий',
+    'сплавы металлов', 'стальные сплавы', 'титановые сплавы',
+    'жаропрочные сплавы', 'суперсплавы', 'анализ рынка', 'цены на металлы',
+    'рынок стали', 'рынок РЗМ', 'импорт металлов', 'экспорт металлов',
+    'тенденции металлургии', 'прогнозы металлургии', 'промышленные обзоры',
+    'металлургическое оборудование', 'печи металлургические',
+    'роботизация металлургии', 'цифровизация металлургии',
+    'инновации металлообработка', 'плазменная резка', 'микролегирование',
+    'неразрушающий контроль', 'гафний', 'про роботов', 'золото',
+    'серебро', 'медь', 'никель', 'алюминий', 'литий', 'кобальт',
+    'аналитика -металлургия', 'новости -промышленность', 'энергетика',
+    'угольная промышленность', 'горное дело', 'геология', 'месторождения',
+    'инвестиции', 'проекты', 'ESG', 'нефтегаз', 'рудники',
+    'инфраструктура', 'транспорт', 'порт', 'танкеры', 'сухогрузы',
+    'цифровизация', 'ИИ', 'искусственный интеллект',
+    'влияние технологий на будущее', 'технологии для удовольствия',
+    'специальная металлургия'
+]
+
+KEYWORDS_EN = [
+    'ferrous metallurgy', 'non-ferrous metallurgy', 'industrial technologies',
+    'metal processing', 'new technologies', 'metallurgy analytics',
+    'market reviews', 'metal production', 'steel production',
+    'powder metallurgy', 'additive manufacturing', 'metal 3D printing',
+    'rare earth metals', 'RE market', 'refractory metals',
+    'tungsten', 'molybdenum', 'niobium', 'tantalum', 'titanium', 'vanadium',
+    'metal alloys', 'steel alloys', 'titanium alloys',
+    'heat-resistant alloys', 'superalloys', 'market analysis', 'metal prices',
+    'steel market', 'rare earth market', 'metal import', 'metal export',
+    'metallurgy trends', 'metallurgy forecasts', 'industrial reviews',
+    'metallurgical equipment', 'metallurgical furnaces',
+    'robotization of metallurgy', 'digitalization of metallurgy',
+    'innovations in metalworking', 'plasma cutting', 'microalloying',
+    'non-destructive testing', 'hafnium', 'about robots', 'gold',
+    'silver', 'copper', 'nickel', 'aluminum', 'lithium', 'cobalt',
+    'analytics - metallurgy', 'news - industry', 'energy',
+    'coal industry', 'mining', 'geology', 'deposits',
+    'investments', 'projects', 'ESG', 'oil and gas', 'mines',
+    'infrastructure', 'transport', 'port', 'tankers', 'bulk carriers',
+    'digitalization', 'AI', 'artificial intelligence',
+    'impact of technology on the future', 'technologies for fun',
+    'special metallurgy'
+]
+
+ALL_KEYWORDS = KEYWORDS_RU + KEYWORDS_EN
+
 # --- Поиск новостей ---
-def search_news(keywords):
+def search_news():
     articles = []
 
-    # 1. NewsAPI
+    # 1. NewsAPI (на английском)
     if NEWSAPI_KEY:
         try:
             url = "https://newsapi.org/v2/everything"
             params = {
-                'q': ' OR '.join(keywords),
+                'q': ' OR '.join(KEYWORDS_EN),
                 'language': 'en',
                 'sortBy': 'publishedAt',
-                'pageSize': 10,
+                'pageSize': 100,
                 'apiKey': NEWSAPI_KEY
             }
-            r = requests.get(url, params=params, timeout=10)
+            r = requests.get(url, params=params, timeout=15)
             if r.status_code == 200:
                 data = r.json()
                 for item in data.get('articles', []):
@@ -72,7 +119,7 @@ def search_news(keywords):
         except Exception as e:
             print(f"NewsAPI ошибка: {e}")
 
-    # 2. RSS из Китая
+    # 2. RSS из Китая (на китайском, но по теме)
     try:
         feeds = {
             'xinhua': 'http://www.xinhuanet.com/rss/world.xml',
@@ -82,13 +129,9 @@ def search_news(keywords):
         for name, feed_url in feeds.items():
             try:
                 feed = feedparser.parse(feed_url)
-                if not feed.entries:
-                    print(f"⚠️ RSS {name} пустой")
-                else:
-                    print(f"✅ {name}: {len(feed.entries)} статей")
                 for entry in feed.entries:
                     title = entry.title.lower()
-                    if any(kw.lower() in title for kw in keywords):
+                    if any(kw.lower() in title for kw in ['metal', 'technology', 'industry', 'steel', 'mining']):
                         articles.append({
                             'title': entry.title,
                             'url': entry.link,
@@ -96,44 +139,14 @@ def search_news(keywords):
                             'published': entry.get('published', 'Неизвестно')
                         })
             except Exception as e:
-                print(f"❌ Ошибка RSS {name}: {e}")
+                print(f"Ошибка RSS {name}: {e}")
     except Exception as e:
         print(f"Ошибка парсинга RSS: {e}")
 
     return articles
 
-# --- Создание PDF ---
-def create_pdf(articles, filename="digest.pdf"):
-    try:
-        font_path = "DejaVuSans.ttf"
-        if not os.path.exists(font_path):
-            print("Шрифт DejaVuSans.ttf не найден")
-            return None
-
-        pdf = FPDF()
-        pdf.add_font('DejaVu', '', font_path, uni=True)
-        pdf.add_page()
-        pdf.set_font('DejaVu', size=14)
-        pdf.cell(0, 10, '📰 Новостной дайджест', ln=True, align='C')
-
-        pdf.set_font('DejaVu', size=12)
-        for art in articles:
-            title_ru = translate_text(art['title'])
-            pdf.cell(0, 8, f"• {title_ru}", ln=True)
-            pdf.set_text_color(0, 0, 255)
-            pdf.cell(0, 8, f"  Источник: {art['source']}", ln=True)
-            pdf.set_text_color(0, 0, 0)
-            pdf.cell(0, 8, f"  Ссылка: {art['url']}", ln=True)
-            pdf.ln(4)
-
-        pdf.output(filename)
-        return filename
-    except Exception as e:
-        print(f"Ошибка создания PDF: {e}")
-        return None
-
 # --- Отправка в Telegram ---
-async def send_message(chat_id, text, parse_mode='Markdown', disable_preview=False):
+def send_message(chat_id, text, parse_mode='Markdown', disable_preview=False):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     data = {
         "chat_id": chat_id,
@@ -146,140 +159,62 @@ async def send_message(chat_id, text, parse_mode='Markdown', disable_preview=Fal
     except Exception as e:
         print(f"Ошибка отправки: {e}")
 
-# --- Отправка ошибок админу ---
-async def send_error(msg):
-    if ADMIN_ID and TOKEN:
-        await send_message(ADMIN_ID, f"❌ Ошибка бота:\n\n`{msg}`")
-
-# --- Команды ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("🔍 Поиск новостей", callback_data='manual_search')],
-        [InlineKeyboardButton("📋 Мои подписки", callback_data='mysubs')],
-        [InlineKeyboardButton("❓ Помощь", callback_data='help')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "Привет! Я бот для поиска новостей.\nВыберите действие:",
-        reply_markup=reply_markup
-    )
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == 'manual_search':
-        await query.edit_message_text("Введите **ключевые слова** для поиска.\nНапример: `космос, NASA`")
-        context.user_data['state'] = AWAITING_KEYWORDS
-
-    elif query.data == 'mysubs':
-        await query.edit_message_text("У вас пока нет активных подписок.")
-
-    elif query.data == 'help':
-        await query.edit_message_text(
-            "Используйте:\n"
-            "🔍 Поиск новостей — ищите по теме\n"
-            "📋 Мои подписки — управление рассылкой\n"
-            "Все новости с переводом на русский."
-        )
-
-async def handle_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('state') != AWAITING_KEYWORDS:
-        return
-
-    keywords_input = update.message.text.strip()
-    if not keywords_input:
-        await update.message.reply_text("Введите хотя бы одно слово.")
-        return
-
-    keywords = [kw.strip().lower() for kw in keywords_input.split(',') if kw.strip()]
-    await update.message.reply_text(f"🔍 Ищу новости по: *{', '.join(keywords)}*...", parse_mode='Markdown')
-
-    # Поиск
-    raw_articles = search_news(keywords)
-    print(f"Получено статей: {len(raw_articles)}")
-
-    if not raw_articles:
-        await update.message.reply_text("❌ Новости не найдены.")
-        context.user_data['state'] = None
-        return
-
-    # Убираем дубли
-    seen_urls = load_cache()
-    articles = [a for a in raw_articles if a.get('url') not in seen_urls]
-
-    if not articles:
-        await update.message.reply_text("Новости уже были показаны ранее.")
-        context.user_data['state'] = None
-        return
-
-    # Показываем первые 5
-    for art in articles[:5]:
-        title_ru = translate_text(art['title'])
-        source = art.get('source', 'Неизвестно')
-        msg = f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}"
-        await update.message.reply_text(msg, parse_mode='Markdown', disable_web_page_preview=False)
-
-    # Создаём PDF
-    pdf_path = create_pdf(articles, "digest.pdf")
-    if pdf_path and os.path.exists(pdf_path):
-        await update.message.reply_document(
-            document=open(pdf_path, 'rb'),
-            caption="📄 PDF-дайджест новостей"
-        )
-        os.remove(pdf_path)
-    else:
-        await update.message.reply_text("⚠️ Не удалось создать PDF.")
-
-    # Обновляем кеш
-    for art in articles:
-        url = art.get('url')
-        if url:
-            seen_urls.add(url)
-    save_cache(seen_urls)
-
-    context.user_data['state'] = None
-
-# --- Запуск в GitHub Actions ---
+# --- Основная функция ---
 def main():
     print("🚀 Бот запущен (режим GitHub Actions)")
     try:
         seen_urls = load_cache()
-        keywords = ['технологии', 'космос', 'AI', '科技', 'technology']
-        print(f"🔍 Ключевые слова: {keywords}")
-        raw_articles = search_news(keywords)
+        raw_articles = search_news()
         print(f"Получено статей: {len(raw_articles)}")
 
-        if not raw_articles:
-            print("❌ Новости не найдены — возможно, ошибка в API или RSS")
+        # Фильтруем по ключевым словам
+        filtered_articles = []
+        for art in raw_articles:
+            title = art['title'].lower()
+            if any(kw.lower() in title for kw in ALL_KEYWORDS):
+                filtered_articles.append(art)
+
+        print(f"После фильтрации: {len(filtered_articles)}")
+
+        # Убираем дубли
+        articles = [a for a in filtered_articles if a.get('url') not in seen_urls]
+
+        # Ограничиваем 10–20 новостями
+        if len(articles) < 10:
+            selected = articles  # меньше 10 — отправляем все
+        else:
+            selected = articles[:20]  # максимум 20
+
+        print(f"Отправляем: {len(selected)} новостей")
+
+        if not selected:
+            print("Нет новых новостей для отправки.")
             return
 
-        new_articles = [a for a in raw_articles if a.get('url') not in seen_urls]
-        print(f"✅ Новых: {len(new_articles)}")
+        # Формируем сообщение
+        msg = "📬 *Ежедневный дайджест*\n\n"
+        for art in selected:
+            title_ru = translate_text(art['title'])
+            source = art.get('source', 'Неизвестно')
+            msg += f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}\n\n"
+
+        # Отправляем админу
+        if ADMIN_ID:
+            send_message(ADMIN_ID, msg, disable_preview=True)
 
         # Обновляем кеш
-        for art in new_articles:
+        for art in selected:
             url = art.get('url')
             if url:
                 seen_urls.add(url)
         save_cache(seen_urls)
 
-        print("✅ Кеш обновлён.")
-
-        # Пример: отправка первой новости админу
-        if new_articles and ADMIN_ID:
-            first = new_articles[0]
-            title_ru = translate_text(first['title'])
-            msg = f"📬 *Новая новость:*\n\n📌 {title_ru}\n🌐 {first.get('source', 'Неизвестно')}\n🔗 {first['url']}"
-            requests.post(
-                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                data={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}
-            )
+        print("✅ Рассылка завершена.")
 
     except Exception as e:
         error_msg = f"{type(e).__name__}: {str(e)[:500]}"
         print(f"🔴 Ошибка: {error_msg}")
-        if ADMIN_ID and TOKEN:
+        if ADMIN_ID:
             requests.post(
                 f"https://api.telegram.org/bot{TOKEN}/sendMessage",
                 data={"chat_id": ADMIN_ID, "text": f"❌ Ошибка: `{error_msg}`"}
@@ -287,7 +222,4 @@ def main():
 
 # --- Запуск ---
 if __name__ == "__main__":
-    if os.getenv("GITHUB_ACTIONS"):
-        main()
-    else:
-        print("Запуск в режиме polling не поддерживается напрямую")
+    main()
