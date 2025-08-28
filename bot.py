@@ -60,7 +60,13 @@ def search_news(keywords):
             r = requests.get(url, params=params, timeout=10)
             if r.status_code == 200:
                 data = r.json()
-                articles.extend(data.get('articles', []))
+                for item in data.get('articles', []):
+                    articles.append({
+                        'title': item['title'],
+                        'url': item['url'],
+                        'source': item['source']['name'],
+                        'published': item.get('publishedAt', 'Неизвестно')
+                    })
             else:
                 print(f"NewsAPI error {r.status_code}: {r.text}")
         except Exception as e:
@@ -85,7 +91,7 @@ def search_news(keywords):
                     if any(kw.lower() in title for kw in keywords):
                         articles.append({
                             'title': entry.title,
-                            'link': entry.link,
+                            'url': entry.link,
                             'source': name,
                             'published': entry.get('published', 'Неизвестно')
                         })
@@ -117,7 +123,7 @@ def create_pdf(articles, filename="digest.pdf"):
             pdf.set_text_color(0, 0, 255)
             pdf.cell(0, 8, f"  Источник: {art['source']}", ln=True)
             pdf.set_text_color(0, 0, 0)
-            pdf.cell(0, 8, f"  Ссылка: {art['link']}", ln=True)
+            pdf.cell(0, 8, f"  Ссылка: {art['url']}", ln=True)
             pdf.ln(4)
 
         pdf.output(filename)
@@ -200,7 +206,7 @@ async def handle_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Убираем дубли
     seen_urls = load_cache()
-    articles = [a for a in raw_articles if a.get('link') not in seen_urls]
+    articles = [a for a in raw_articles if a.get('url') not in seen_urls]
 
     if not articles:
         await update.message.reply_text("Новости уже были показаны ранее.")
@@ -211,7 +217,7 @@ async def handle_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for art in articles[:5]:
         title_ru = translate_text(art['title'])
         source = art.get('source', 'Неизвестно')
-        msg = f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['link']}"
+        msg = f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}"
         await update.message.reply_text(msg, parse_mode='Markdown', disable_web_page_preview=False)
 
     # Создаём PDF
@@ -227,7 +233,7 @@ async def handle_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Обновляем кеш
     for art in articles:
-        url = art.get('link')
+        url = art.get('url')
         if url:
             seen_urls.add(url)
     save_cache(seen_urls)
@@ -248,12 +254,12 @@ def main():
             print("❌ Новости не найдены — возможно, ошибка в API или RSS")
             return
 
-        new_articles = [a for a in raw_articles if a.get('link') not in seen_urls]
+        new_articles = [a for a in raw_articles if a.get('url') not in seen_urls]
         print(f"✅ Новых: {len(new_articles)}")
 
         # Обновляем кеш
         for art in new_articles:
-            url = art.get('link')
+            url = art.get('url')
             if url:
                 seen_urls.add(url)
         save_cache(seen_urls)
@@ -264,7 +270,7 @@ def main():
         if new_articles and ADMIN_ID:
             first = new_articles[0]
             title_ru = translate_text(first['title'])
-            msg = f"📬 *Новая новость:*\n\n📌 {title_ru}\n🌐 {first.get('source', 'Неизвестно')}\n🔗 {first['link']}"
+            msg = f"📬 *Новая новость:*\n\n📌 {title_ru}\n🌐 {first.get('source', 'Неизвестно')}\n🔗 {first['url']}"
             requests.post(
                 f"https://api.telegram.org/bot{TOKEN}/sendMessage",
                 data={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}

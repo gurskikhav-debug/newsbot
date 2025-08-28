@@ -6,7 +6,7 @@ on:
   workflow_dispatch:         # Запуск вручную
 
 jobs:
-  run_bot:  # Исправлено: без дефиса
+  run_bot:
     runs-on: ubuntu-latest
 
     steps:
