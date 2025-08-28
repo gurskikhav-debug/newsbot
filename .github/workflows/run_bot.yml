@@ -3,7 +3,7 @@ name: 🤖 Ежедневный новостной бот
 on:
   schedule:
     - cron: '0 15 * * *'   # 15:00 UTC = 18:00 МСК
-  workflow_dispatch:         # Можно запустить вручную
+  workflow_dispatch:
 
 jobs:
   run_bot:
