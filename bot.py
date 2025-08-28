@@ -8,7 +8,7 @@ import feedparser
 # --- Настройки ---
 TOKEN = os.getenv("TOKEN")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
-ADMIN_ID = os.getenv("ADMIN_ID")  # Ваш Telegram ID
+ADMIN_ID = os.getenv("ADMIN_ID")
 
 # --- Кеш ---
 CACHE_FILE = "cache/news_cache.json"
@@ -36,55 +36,27 @@ def translate_text(text):
         print(f"Ошибка перевода: {e}")
         return text
 
-# --- Ключевые слова (на русском и английском) ---
-KEYWORDS_RU = [
-    'черная металлургия', 'цветная металлургия', 'промышленные технологии',
-    'обработка металлов', 'новые технологии', 'аналитика металлургии',
-    'обзоры рынка', 'производство металлов', 'производство стали',
-    'порошковая металлургия', 'аддитивные технологии', '3D-печать металлом',
-    'редкоземельные металлы', 'РЗМ -рынок', 'тугоплавкие металлы',
-    'вольфрам', 'молибден', 'ниобий', 'тантал', 'титан', 'ванадий',
-    'сплавы металлов', 'стальные сплавы', 'титановые сплавы',
-    'жаропрочные сплавы', 'суперсплавы', 'анализ рынка', 'цены на металлы',
-    'рынок стали', 'рынок РЗМ', 'импорт металлов', 'экспорт металлов',
-    'тенденции металлургии', 'прогнозы металлургии', 'промышленные обзоры',
-    'металлургическое оборудование', 'печи металлургические',
-    'роботизация металлургии', 'цифровизация металлургии',
-    'инновации металлообработка', 'плазменная резка', 'микролегирование',
-    'неразрушающий контроль', 'гафний', 'про роботов', 'золото',
-    'серебро', 'медь', 'никель', 'алюминий', 'литий', 'кобальт',
-    'аналитика -металлургия', 'новости -промышленность', 'энергетика',
-    'угольная промышленность', 'горное дело', 'геология', 'месторождения',
-    'инвестиции', 'проекты', 'ESG', 'нефтегаз', 'рудники',
-    'инфраструктура', 'транспорт', 'порт', 'танкеры', 'сухогрузы',
-    'цифровизация', 'ИИ', 'искусственный интеллект',
-    'влияние технологий на будущее', 'технологии для удовольствия',
-    'специальная металлургия'
+# --- Ключевые слова (оптимизированные, не более 15-20) ---
+KEYWORDS_EN = [
+    'metallurgy', 'ferrous metallurgy', 'non-ferrous metallurgy',
+    'steel production', 'metal processing', 'additive manufacturing',
+    '3D printing metal', 'rare earth metals', 'refractory metals',
+    'tungsten', 'molybdenum', 'titanium', 'nickel', 'aluminum',
+    'copper', 'lithium', 'cobalt', 'industrial technology',
+    'market analysis metals', 'steel market', 'rare earth market',
+    'mining', 'industrial innovation', 'digitalization industry',
+    'AI in industry', 'robotization of industry'
 ]
 
-KEYWORDS_EN = [
-    'ferrous metallurgy', 'non-ferrous metallurgy', 'industrial technologies',
-    'metal processing', 'new technologies', 'metallurgy analytics',
-    'market reviews', 'metal production', 'steel production',
-    'powder metallurgy', 'additive manufacturing', 'metal 3D printing',
-    'rare earth metals', 'RE market', 'refractory metals',
-    'tungsten', 'molybdenum', 'niobium', 'tantalum', 'titanium', 'vanadium',
-    'metal alloys', 'steel alloys', 'titanium alloys',
-    'heat-resistant alloys', 'superalloys', 'market analysis', 'metal prices',
-    'steel market', 'rare earth market', 'metal import', 'metal export',
-    'metallurgy trends', 'metallurgy forecasts', 'industrial reviews',
-    'metallurgical equipment', 'metallurgical furnaces',
-    'robotization of metallurgy', 'digitalization of metallurgy',
-    'innovations in metalworking', 'plasma cutting', 'microalloying',
-    'non-destructive testing', 'hafnium', 'about robots', 'gold',
-    'silver', 'copper', 'nickel', 'aluminum', 'lithium', 'cobalt',
-    'analytics - metallurgy', 'news - industry', 'energy',
-    'coal industry', 'mining', 'geology', 'deposits',
-    'investments', 'projects', 'ESG', 'oil and gas', 'mines',
-    'infrastructure', 'transport', 'port', 'tankers', 'bulk carriers',
-    'digitalization', 'AI', 'artificial intelligence',
-    'impact of technology on the future', 'technologies for fun',
-    'special metallurgy'
+KEYWORDS_RU = [
+    'металлургия', 'черная металлургия', 'цветная металлургия',
+    'производство стали', 'обработка металлов', 'аддитивные технологии',
+    '3D печать металлом', 'редкоземельные металлы', 'тугоплавкие металлы',
+    'вольфрам', 'молибден', 'титан', 'никель', 'алюминий',
+    'медь', 'литий', 'кобальт', 'промышленные технологии',
+    'анализ рынка металлов', 'рынок стали', 'рынок РЗМ',
+    'горное дело', 'промышленные инновации', 'цифровизация промышленности',
+    'ИИ в промышленности', 'роботизация промышленности'
 ]
 
 ALL_KEYWORDS = KEYWORDS_RU + KEYWORDS_EN
@@ -93,33 +65,41 @@ ALL_KEYWORDS = KEYWORDS_RU + KEYWORDS_EN
 def search_news():
     articles = []
 
-    # 1. NewsAPI (на английском)
+    # 1. NewsAPI — разбиваем запрос на части
     if NEWSAPI_KEY:
-        try:
-            url = "https://newsapi.org/v2/everything"
-            params = {
-                'q': ' OR '.join(KEYWORDS_EN),
-                'language': 'en',
-                'sortBy': 'publishedAt',
-                'pageSize': 100,
-                'apiKey': NEWSAPI_KEY
-            }
-            r = requests.get(url, params=params, timeout=15)
-            if r.status_code == 200:
-                data = r.json()
-                for item in data.get('articles', []):
-                    articles.append({
-                        'title': item['title'],
-                        'url': item['url'],
-                        'source': item['source']['name'],
-                        'published': item.get('publishedAt', 'Неизвестно')
-                    })
-            else:
-                print(f"NewsAPI error {r.status_code}: {r.text}")
-        except Exception as e:
-            print(f"NewsAPI ошибка: {e}")
+        # Группируем ключевые слова на более короткие запросы
+        queries = [
+            ' OR '.join(KEYWORDS_EN[:8]),   # Группа 1: металлургия
+            ' OR '.join(KEYWORDS_EN[8:16]), # Группа 2: металлы
+            ' OR '.join(KEYWORDS_EN[16:])   # Группа 3: технологии
+        ]
 
-    # 2. RSS из Китая (на китайском, но по теме)
+        for query in queries:
+            try:
+                url = "https://newsapi.org/v2/everything"
+                params = {
+                    'q': query,
+                    'language': 'en',
+                    'sortBy': 'publishedAt',
+                    'pageSize': 20,
+                    'apiKey': NEWSAPI_KEY
+                }
+                r = requests.get(url, params=params, timeout=15)
+                if r.status_code == 200:
+                    data = r.json()
+                    for item in data.get('articles', []):
+                        articles.append({
+                            'title': item['title'],
+                            'url': item['url'],
+                            'source': item['source']['name'],
+                            'published': item.get('publishedAt', 'Неизвестно')
+                        })
+                else:
+                    print(f"NewsAPI error {r.status_code}: {r.text} (query: {query[:50]}...)")
+            except Exception as e:
+                print(f"NewsAPI ошибка: {e}")
+
+    # 2. RSS из Китая
     try:
         feeds = {
             'xinhua': 'http://www.xinhuanet.com/rss/world.xml',
@@ -131,7 +111,7 @@ def search_news():
                 feed = feedparser.parse(feed_url)
                 for entry in feed.entries:
                     title = entry.title.lower()
-                    if any(kw.lower() in title for kw in ['metal', 'technology', 'industry', 'steel', 'mining']):
+                    if any(kw.lower() in title for kw in ['metal', 'steel', 'technology', 'industry', 'mining']):
                         articles.append({
                             'title': entry.title,
                             'url': entry.link,
