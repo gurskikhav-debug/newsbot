@@ -2,7 +2,7 @@ import os
 import json
 import requests
 from datetime import datetime
-from deep_translator import GoogleTranslator  # ✅ Новый переводчик
+from deep_translator import GoogleTranslator
 import feedparser
 from fpdf import FPDF
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -136,16 +136,6 @@ async def send_message(chat_id, text, parse_mode='Markdown', disable_preview=Fal
     except Exception as e:
         print(f"Ошибка отправки: {e}")
 
-async def send_document(chat_id, file_path, caption=""):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendDocument"
-    try:
-        with open(file_path, 'rb') as f:
-            files = {'document': f}
-            data = {'chat_id': chat_id, 'caption': caption}
-            requests.post(url, data=data, files=files, timeout=15)
-    except Exception as e:
-        print(f"Ошибка отправки PDF: {e}")
-
 # --- Отправка ошибок админу ---
 async def send_error(msg):
     if ADMIN_ID and TOKEN:
@@ -202,13 +192,9 @@ async def handle_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['state'] = None
         return
 
-    # Убираем дубли по ссылке
+    # Убираем дубли
     seen_urls = load_cache()
-    articles = []
-    for art in raw_articles:
-        url = art.get('link') or art.get('url')
-        if url and url not in seen_urls:
-            articles.append(art)
+    articles = [a for a in raw_articles if a.get('link') not in seen_urls]
 
     if not articles:
         await update.message.reply_text("Новости уже были показаны ранее.")
@@ -235,7 +221,7 @@ async def handle_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Обновляем кеш
     for art in articles:
-        url = art.get('link') or art.get('url')
+        url = art.get('link')
         if url:
             seen_urls.add(url)
     save_cache(seen_urls)
@@ -247,20 +233,16 @@ def main():
     print("🚀 Бот запущен (режим GitHub Actions)")
     try:
         seen_urls = load_cache()
-        keywords = ['технологии', 'космос', 'AI']  # можно брать из БД
+        keywords = ['технологии', 'космос', 'AI']
         raw_articles = search_news(keywords)
 
-        new_articles = []
-        for art in raw_articles:
-            url = art.get('link') or art.get('url')
-            if url and url not in seen_urls:
-                new_articles.append(art)
+        new_articles = [a for a in raw_articles if a.get('link') not in seen_urls]
 
         print(f"Найдено новых: {len(new_articles)}")
 
         # Обновляем кеш
         for art in new_articles:
-            url = art.get('link') or art.get('url')
+            url = art.get('link')
             if url:
                 seen_urls.add(url)
         save_cache(seen_urls)

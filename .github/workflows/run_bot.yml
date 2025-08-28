@@ -3,10 +3,10 @@ name: 🤖 Запуск новостного бота
 on:
   schedule:
     - cron: '0 */6 * * *'   # Каждые 6 часов
-  workflow_dispatch:         # Можно запустить вручную
+  workflow_dispatch:         # Запуск вручную
 
 jobs:
-  run-bot:
+  run_bot:  # Исправлено: без дефиса
     runs-on: ubuntu-latest
 
     steps:
@@ -23,22 +23,29 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 🔐 Загрузить кеш новостей
+      - name: 🔐 Восстановить кеш новостей
         uses: actions/cache@v3
         id: cache-news
         with:
           path: cache/news_cache.json
           key: news-cache-v1
 
+      - name: 📁 Создать папку cache
+        run: mkdir -p cache
+
+      - name: 📄 Инициализировать кеш (если отсутствует)
+        if: steps.cache-news.outputs.cache-hit != 'true'
+        run: echo "[]" > cache/news_cache.json
+
       - name: 🏃 Запустить бота
         env:
           TOKEN: ${{ secrets.TOKEN }}
           NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
           ADMIN_ID: ${{ secrets.ADMIN_ID }}
+          GITHUB_ACTIONS: "true"
         run: python bot.py
 
-      - name: 💾 Сохранить кеш новостей
-        if: steps.cache-news.outputs.cache-hit != 'true'
+      - name: 💾 Сохранить обновлённый кеш
         uses: actions/cache@v3
         with:
           path: cache/news_cache.json
