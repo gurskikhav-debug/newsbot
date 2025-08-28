@@ -36,41 +36,39 @@ def translate_text(text):
         print(f"Ошибка перевода: {e}")
         return text
 
-# --- Ключевые слова (оптимизированные) ---
+# --- Ключевые слова (с учётом морфологии) ---
 KEYWORDS_EN = [
-    'metallurgy', 'ferrous metallurgy', 'non-ferrous metallurgy',
-    'steel production', 'metal processing', 'additive manufacturing',
-    '3D printing metal', 'rare earth metals', 'refractory metals',
-    'tungsten', 'molybdenum', 'titanium', 'nickel', 'aluminum',
-    'copper', 'lithium', 'cobalt', 'industrial technology',
-    'market analysis metals', 'steel market', 'rare earth market',
-    'mining', 'industrial innovation', 'digitalization industry',
-    'AI in industry', 'robotization of industry'
+    'metallurgy', 'ferrous', 'non-ferrous', 'steel', 'metal processing',
+    'additive manufacturing', '3D printing', 'AM', 'rapid prototyping',
+    'artificial intelligence', 'AI', 'machine learning', 'neural network',
+    'robotics', 'robot', 'robots', 'robotic', 'automation', 'autonomous',
+    'green energy', 'renewable energy', 'solar', 'wind', 'hydrogen', 'battery',
+    'new technologies', 'emerging tech', 'innovation',
+    'fun tech', 'gaming tech', 'entertainment technology', 'hobby tech'
 ]
 
 KEYWORDS_RU = [
     'металлургия', 'черная металлургия', 'цветная металлургия',
-    'производство стали', 'обработка металлов', 'аддитивные технологии',
-    '3D печать металлом', 'редкоземельные металлы', 'тугоплавкие металлы',
-    'вольфрам', 'молибден', 'титан', 'никель', 'алюминий',
-    'медь', 'литий', 'кобальт', 'промышленные технологии',
-    'анализ рынка металлов', 'рынок стали', 'рынок РЗМ',
-    'горное дело', 'промышленные инновации', 'цифровизация промышленности',
-    'ИИ в промышленности', 'роботизация промышленности'
+    'производство стали', 'обработка металлов', 'сталь', 'металл',
+    'аддитивные технологии', '3D печать', '3D-печать', 'аддитив',
+    'искусственный интеллект', 'ИИ', 'машинное обучение', 'нейросеть',
+    'робототехника', 'робот', 'роботы', 'роботиза', 'автоматизация',
+    'зелёная энергетика', 'возобновляемая энергия', 'солнечная', 'ветровая',
+    'водород', 'батареи', 'аккумуляторы',
+    'новые технологии', 'инновации', 'прорывные технологии',
+    'технологии для удовольствия', 'игровые технологии', 'развлечения',
+    'техника для хобби', 'fun tech'
 ]
-
-ALL_KEYWORDS = KEYWORDS_RU + KEYWORDS_EN
 
 # --- Поиск новостей за последние 3 дня ---
 def search_news():
     articles = []
 
-    # 1. NewsAPI — с фильтром по дате
+    # 1. NewsAPI — с фильтром по дате и группировкой запросов
     if NEWSAPI_KEY:
-        # Дата 3 дня назад
         from_date = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d')
 
-        # Группируем ключевые слова
+        # Группы ключевых слов (чтобы не превысить 500 символов)
         queries = [
             ' OR '.join(KEYWORDS_EN[:8]),
             ' OR '.join(KEYWORDS_EN[8:16]),
@@ -115,7 +113,8 @@ def search_news():
                 feed = feedparser.parse(feed_url)
                 for entry in feed.entries:
                     title = entry.title.lower()
-                    if any(kw.lower() in title for kw in ['metal', 'steel', 'technology', 'industry']):
+                    # Проверяем частичное вхождение
+                    if any(kw.lower() in title for kw in ['metal', 'tech', 'ai', 'robot', 'energy', 'green', '3d']):
                         articles.append({
                             'title': entry.title,
                             'url': entry.link,
@@ -151,11 +150,12 @@ def main():
         raw_articles = search_news()
         print(f"Получено статей: {len(raw_articles)}")
 
-        # Фильтруем по ключевым словам
+        # Фильтруем по ключевым словам (с учётом морфологии)
         filtered_articles = []
-        for art in raw_articles:
-            title = art['title'].lower()
-            if any(kw.lower() in title for kw in ALL_KEYWORDS):
+        title_lower_cache = [art['title'].lower() for art in raw_articles]
+        for i, art in enumerate(raw_articles):
+            title = title_lower_cache[i]
+            if any(kw.lower() in title for kw in KEYWORDS_RU + KEYWORDS_EN):
                 filtered_articles.append(art)
 
         print(f"После фильтрации: {len(filtered_articles)}")
