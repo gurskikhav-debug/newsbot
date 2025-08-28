@@ -4,14 +4,13 @@ import requests
 from datetime import datetime
 from deep_translator import GoogleTranslator
 import feedparser
-from fpdf import FPDF
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 # --- Настройки ---
 TOKEN = os.getenv("TOKEN")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
-ADMIN_ID = os.getenv("ADMIN_ID")
+CHANNEL_ID = os.getenv("CHANNEL_ID")  # Может быть None
 
 # --- Состояния ---
 AWAITING_KEYWORDS = "awaiting_keywords"
@@ -82,10 +81,6 @@ def search_news(keywords):
         for name, feed_url in feeds.items():
             try:
                 feed = feedparser.parse(feed_url)
-                if not feed.entries:
-                    print(f"⚠️ RSS {name} пустой")
-                else:
-                    print(f"✅ {name}: {len(feed.entries)} статей")
                 for entry in feed.entries:
                     title = entry.title.lower()
                     if any(kw.lower() in title for kw in keywords):
@@ -96,67 +91,28 @@ def search_news(keywords):
                             'published': entry.get('published', 'Неизвестно')
                         })
             except Exception as e:
-                print(f"❌ Ошибка RSS {name}: {e}")
+                print(f"Ошибка RSS {name}: {e}")
     except Exception as e:
         print(f"Ошибка парсинга RSS: {e}")
 
     return articles
 
-# --- Создание PDF ---
-def create_pdf(articles, filename="digest.pdf"):
+# --- Проверка доступности канала ---
+async def is_channel_accessible(context: ContextTypes.DEFAULT_TYPE):
+    if not CHANNEL_ID:
+        return False
     try:
-        font_path = "DejaVuSans.ttf"
-        if not os.path.exists(font_path):
-            print("Шрифт DejaVuSans.ttf не найден")
-            return None
-
-        pdf = FPDF()
-        pdf.add_font('DejaVu', '', font_path, uni=True)
-        pdf.add_page()
-        pdf.set_font('DejaVu', size=14)
-        pdf.cell(0, 10, '📰 Новостной дайджест', ln=True, align='C')
-
-        pdf.set_font('DejaVu', size=12)
-        for art in articles:
-            title_ru = translate_text(art['title'])
-            pdf.cell(0, 8, f"• {title_ru}", ln=True)
-            pdf.set_text_color(0, 0, 255)
-            pdf.cell(0, 8, f"  Источник: {art['source']}", ln=True)
-            pdf.set_text_color(0, 0, 0)
-            pdf.cell(0, 8, f"  Ссылка: {art['url']}", ln=True)
-            pdf.ln(4)
-
-        pdf.output(filename)
-        return filename
+        await context.bot.send_message(chat_id=CHANNEL_ID, text="🧪 Проверка доступа...", disable_notification=True)
+        return True
     except Exception as e:
-        print(f"Ошибка создания PDF: {e}")
-        return None
-
-# --- Отправка в Telegram ---
-async def send_message(chat_id, text, parse_mode='Markdown', disable_preview=False):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    data = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": parse_mode,
-        "disable_web_page_preview": disable_preview
-    }
-    try:
-        requests.post(url, data=data, timeout=10)
-    except Exception as e:
-        print(f"Ошибка отправки: {e}")
-
-# --- Отправка ошибок админу ---
-async def send_error(msg):
-    if ADMIN_ID and TOKEN:
-        await send_message(ADMIN_ID, f"❌ Ошибка бота:\n\n`{msg}`")
+        print(f"Канал недоступен: {e}")
+        return False
 
 # --- Команды ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("🔍 Поиск новостей", callback_data='manual_search')],
-        [InlineKeyboardButton("📋 Мои подписки", callback_data='mysubs')],
-        [InlineKeyboardButton("❓ Помощь", callback_data='help')]
+        [InlineKeyboardButton("🔍 Найти новости", callback_data='manual_search')],
+        [InlineKeyboardButton("📋 Помощь", callback_data='help')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -169,18 +125,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if query.data == 'manual_search':
-        await query.edit_message_text("Введите **ключевые слова** для поиска.\nНапример: `космос, NASA`")
+        await query.edit_message_text("Введите **ключевые слова** для поиска.\nНапример: `космос, AI`")
         context.user_data['state'] = AWAITING_KEYWORDS
-
-    elif query.data == 'mysubs':
-        await query.edit_message_text("У вас пока нет активных подписок.")
 
     elif query.data == 'help':
         await query.edit_message_text(
             "Используйте:\n"
-            "🔍 Поиск новостей — ищите по теме\n"
-            "📋 Мои подписки — управление рассылкой\n"
-            "Все новости с переводом на русский."
+            "🔍 Найти новости — ищите по теме\n"
+            "Все новости с переводом на русский.\n"
+            "Результаты отправляются в личку и в канал (если доступен)."
         )
 
 async def handle_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -220,16 +173,25 @@ async def handle_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}"
         await update.message.reply_text(msg, parse_mode='Markdown', disable_web_page_preview=False)
 
-    # Создаём PDF
-    pdf_path = create_pdf(articles, "digest.pdf")
-    if pdf_path and os.path.exists(pdf_path):
-        await update.message.reply_document(
-            document=open(pdf_path, 'rb'),
-            caption="📄 PDF-дайджест новостей"
-        )
-        os.remove(pdf_path)
-    else:
-        await update.message.reply_text("⚠️ Не удалось создать PDF.")
+    # Проверяем канал и отправляем первую новость
+    if CHANNEL_ID:
+        is_accessible = await is_channel_accessible(context)
+        if is_accessible:
+            first = articles[0]
+            title_ru = translate_text(first['title'])
+            msg = f"📰 *{title_ru}*\n🌐 {first['source']}\n🔗 {first['url']}"
+            try:
+                await context.bot.send_message(
+                    chat_id=CHANNEL_ID,
+                    text=msg,
+                    parse_mode='Markdown',
+                    disable_web_page_preview=False
+                )
+                await update.message.reply_text(f"✅ Первая новость отправлена в канал: {CHANNEL_ID}")
+            except Exception as e:
+                await update.message.reply_text(f"❌ Не удалось отправить в канал: {e}")
+        else:
+            await update.message.reply_text(f"⚠️ Бот не может писать в канал {CHANNEL_ID}. Добавьте его админом.")
 
     # Обновляем кеш
     for art in articles:
@@ -240,54 +202,6 @@ async def handle_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data['state'] = None
 
-# --- Запуск в GitHub Actions ---
-def main():
-    print("🚀 Бот запущен (режим GitHub Actions)")
-    try:
-        seen_urls = load_cache()
-        keywords = ['технологии', 'космос', 'AI', '科技', 'technology']
-        print(f"🔍 Ключевые слова: {keywords}")
-        raw_articles = search_news(keywords)
-        print(f"Получено статей: {len(raw_articles)}")
-
-        if not raw_articles:
-            print("❌ Новости не найдены — возможно, ошибка в API или RSS")
-            return
-
-        new_articles = [a for a in raw_articles if a.get('url') not in seen_urls]
-        print(f"✅ Новых: {len(new_articles)}")
-
-        # Обновляем кеш
-        for art in new_articles:
-            url = art.get('url')
-            if url:
-                seen_urls.add(url)
-        save_cache(seen_urls)
-
-        print("✅ Кеш обновлён.")
-
-        # Пример: отправка первой новости админу
-        if new_articles and ADMIN_ID:
-            first = new_articles[0]
-            title_ru = translate_text(first['title'])
-            msg = f"📬 *Новая новость:*\n\n📌 {title_ru}\n🌐 {first.get('source', 'Неизвестно')}\n🔗 {first['url']}"
-            requests.post(
-                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                data={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}
-            )
-
-    except Exception as e:
-        error_msg = f"{type(e).__name__}: {str(e)[:500]}"
-        print(f"🔴 Ошибка: {error_msg}")
-        if ADMIN_ID and TOKEN:
-            requests.post(
-                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                data={"chat_id": ADMIN_ID, "text": f"❌ Ошибка: `{error_msg}`"}
-            )
-
 # --- Запуск ---
 if __name__ == "__main__":
-    if os.getenv("GITHUB_ACTIONS"):
-        main()
-    else:
-        print("Запуск в режиме polling не поддерживается напрямую")
+    pass  # Только ручной режим
