@@ -5,7 +5,7 @@ from datetime import datetime
 from deep_translator import GoogleTranslator
 import feedparser
 from fpdf import FPDF
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 # --- Настройки ---
@@ -76,6 +76,10 @@ def search_news(keywords):
         for name, feed_url in feeds.items():
             try:
                 feed = feedparser.parse(feed_url)
+                if not feed.entries:
+                    print(f"⚠️ RSS {name} пустой")
+                else:
+                    print(f"✅ {name}: {len(feed.entries)} статей")
                 for entry in feed.entries:
                     title = entry.title.lower()
                     if any(kw.lower() in title for kw in keywords):
@@ -86,7 +90,7 @@ def search_news(keywords):
                             'published': entry.get('published', 'Неизвестно')
                         })
             except Exception as e:
-                print(f"Ошибка RSS {name}: {e}")
+                print(f"❌ Ошибка RSS {name}: {e}")
     except Exception as e:
         print(f"Ошибка парсинга RSS: {e}")
 
@@ -187,6 +191,8 @@ async def handle_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Поиск
     raw_articles = search_news(keywords)
+    print(f"Получено статей: {len(raw_articles)}")
+
     if not raw_articles:
         await update.message.reply_text("❌ Новости не найдены.")
         context.user_data['state'] = None
@@ -233,12 +239,17 @@ def main():
     print("🚀 Бот запущен (режим GitHub Actions)")
     try:
         seen_urls = load_cache()
-        keywords = ['технологии', 'космос', 'AI']
+        keywords = ['технологии', 'космос', 'AI', '科技', 'technology']
+        print(f"🔍 Ключевые слова: {keywords}")
         raw_articles = search_news(keywords)
+        print(f"Получено статей: {len(raw_articles)}")
+
+        if not raw_articles:
+            print("❌ Новости не найдены — возможно, ошибка в API или RSS")
+            return
 
         new_articles = [a for a in raw_articles if a.get('link') not in seen_urls]
-
-        print(f"Найдено новых: {len(new_articles)}")
+        print(f"✅ Новых: {len(new_articles)}")
 
         # Обновляем кеш
         for art in new_articles:
@@ -248,13 +259,14 @@ def main():
         save_cache(seen_urls)
 
         print("✅ Кеш обновлён.")
+
     except Exception as e:
         error_msg = f"{type(e).__name__}: {str(e)[:500]}"
-        print(f"Ошибка: {error_msg}")
+        print(f"🔴 Ошибка: {error_msg}")
         if ADMIN_ID and TOKEN:
             requests.post(
                 f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                data={"chat_id": ADMIN_ID, "text": f"❌ Ошибка в GitHub Actions:\n\n`{error_msg}`"}
+                data={"chat_id": ADMIN_ID, "text": f"❌ Ошибка: `{error_msg}`"}
             )
 
 # --- Запуск ---
