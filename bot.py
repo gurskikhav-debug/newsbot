@@ -260,6 +260,16 @@ def main():
 
         print("✅ Кеш обновлён.")
 
+        # Пример: отправка первой новости админу
+        if new_articles and ADMIN_ID:
+            first = new_articles[0]
+            title_ru = translate_text(first['title'])
+            msg = f"📬 *Новая новость:*\n\n📌 {title_ru}\n🌐 {first.get('source', 'Неизвестно')}\n🔗 {first['link']}"
+            requests.post(
+                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                data={"chat_id": ADMIN_ID, "text": msg, "parse_mode": "Markdown"}
+            )
+
     except Exception as e:
         error_msg = f"{type(e).__name__}: {str(e)[:500]}"
         print(f"🔴 Ошибка: {error_msg}")
