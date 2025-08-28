@@ -1,7 +1,7 @@
 import os
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from deep_translator import GoogleTranslator
 import feedparser
 
@@ -36,7 +36,7 @@ def translate_text(text):
         print(f"Ошибка перевода: {e}")
         return text
 
-# --- Ключевые слова (оптимизированные, не более 15-20) ---
+# --- Ключевые слова (оптимизированные) ---
 KEYWORDS_EN = [
     'metallurgy', 'ferrous metallurgy', 'non-ferrous metallurgy',
     'steel production', 'metal processing', 'additive manufacturing',
@@ -61,17 +61,20 @@ KEYWORDS_RU = [
 
 ALL_KEYWORDS = KEYWORDS_RU + KEYWORDS_EN
 
-# --- Поиск новостей ---
+# --- Поиск новостей за последние 3 дня ---
 def search_news():
     articles = []
 
-    # 1. NewsAPI — разбиваем запрос на части
+    # 1. NewsAPI — с фильтром по дате
     if NEWSAPI_KEY:
-        # Группируем ключевые слова на более короткие запросы
+        # Дата 3 дня назад
+        from_date = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d')
+
+        # Группируем ключевые слова
         queries = [
-            ' OR '.join(KEYWORDS_EN[:8]),   # Группа 1: металлургия
-            ' OR '.join(KEYWORDS_EN[8:16]), # Группа 2: металлы
-            ' OR '.join(KEYWORDS_EN[16:])   # Группа 3: технологии
+            ' OR '.join(KEYWORDS_EN[:8]),
+            ' OR '.join(KEYWORDS_EN[8:16]),
+            ' OR '.join(KEYWORDS_EN[16:])
         ]
 
         for query in queries:
@@ -79,6 +82,7 @@ def search_news():
                 url = "https://newsapi.org/v2/everything"
                 params = {
                     'q': query,
+                    'from': from_date,
                     'language': 'en',
                     'sortBy': 'publishedAt',
                     'pageSize': 20,
@@ -111,7 +115,7 @@ def search_news():
                 feed = feedparser.parse(feed_url)
                 for entry in feed.entries:
                     title = entry.title.lower()
-                    if any(kw.lower() in title for kw in ['metal', 'steel', 'technology', 'industry', 'mining']):
+                    if any(kw.lower() in title for kw in ['metal', 'steel', 'technology', 'industry']):
                         articles.append({
                             'title': entry.title,
                             'url': entry.link,
