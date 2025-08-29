@@ -1,16 +1,12 @@
-name: 🤖 Telegram Бот (с меню и поиском)
+name: 🌐 Универсальный бот (поиск по содержимому)
 
 on:
   workflow_dispatch:
     inputs:
-      command:
-        description: 'Команда для бота (например: /start или /search)'
-        required: true
-        default: '/start'
       keywords:
-        description: 'Ключевые слова для поиска (если /search)'
-        required: false
-        default: ''
+        description: 'Введите ключевые слова для поиска (через запятую)'
+        required: true
+        default: 'технологии, космос, AI'
 
 jobs:
   run_bot:
@@ -50,7 +46,6 @@ jobs:
           NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
           ADMIN_ID: ${{ secrets.ADMIN_ID }}
           GITHUB_ACTIONS: "true"
-          BOT_COMMAND: ${{ github.event.inputs.command }}
           KEYWORDS: ${{ github.event.inputs.keywords }}
         run: python bot.py
 
