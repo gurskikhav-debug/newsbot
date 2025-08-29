@@ -5,14 +5,12 @@ from datetime import datetime, timedelta
 from deep_translator import GoogleTranslator
 import feedparser
 from bs4 import BeautifulSoup
-from urllib3.exceptions import ConnectTimeoutError, MaxRetryError
-import re
 
 # --- Настройки ---
 TOKEN = os.getenv("TOKEN")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 ADMIN_ID = os.getenv("ADMIN_ID")
-KEYWORDS_INPUT = os.getenv("KEYWORDS", "технологии, космос, AI")  # Из workflow
+KEYWORDS_INPUT = os.getenv("KEYWORDS", "технологии, изобретения, AI")  # Из workflow
 
 # --- Кеш ---
 CACHE_FILE = "cache/news_cache.json"
@@ -40,6 +38,14 @@ def translate_text(text):
         print(f"Ошибка перевода: {e}")
         return text
 
+# --- Ключевые слова для технических признаков ---
+TECH_INDICATORS = [
+    'характеристики', 'свойства', 'применение', 'используется в', 'технология', 'изобретение',
+    'новинка', 'разработка', 'физическое явление', 'эффект', 'механизм', 'работа', 'принцип',
+    'улучшение', 'совершенствование', 'производительность', 'эффективность', 'инновация',
+    'влияние на рынок', 'рыночный потенциал', 'экономия', 'автоматизация', 'робот'
+]
+
 # --- Извлечение текста со страницы ---
 def extract_text_from_url(url):
     try:
@@ -48,24 +54,24 @@ def extract_text_from_url(url):
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
             'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
+            'Connection': 'keep-alive'
         }
         r = requests.get(url, timeout=15, headers=headers)
         r.raise_for_status()
         soup = BeautifulSoup(r.content, 'html.parser')
-
-        # Удаляем ненужное
-        for element in soup(['script', 'style', 'nav', 'footer', 'header', 'aside', 'iframe']):
+        for element in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
             element.decompose()
-
         text = soup.get_text(separator=' ', strip=True)
         return text.lower()
-    except (requests.exceptions.RequestException, Exception) as e:
+    except Exception as e:
         print(f"❌ Ошибка при парсинге {url}: {e}")
         return ""
 
-# --- Проверка, содержит ли статья ключевые слова в тексте ---
+# --- Проверка, содержит ли статья признаки технической информации ---
+def is_technical_article(text):
+    return any(indicator in text for indicator in [w.lower() for w in TECH_INDICATORS])
+
+# --- Проверка, содержит ли статья ключевые слова в заголовке или тексте ---
 def contains_keywords_in_text(url, keywords):
     text = extract_text_from_url(url)
     return any(kw.lower() in text for kw in keywords)
@@ -174,13 +180,14 @@ def main():
             send_message(ADMIN_ID, "❌ Новости по заданным словам не найдены.")
         return
 
-    # Фильтруем по содержимому (если нужно)
+    # Фильтруем по содержимому и техническим признакам
     filtered_articles = []
     for art in raw_articles:
-        if contains_keywords_in_text(art['url'], keywords):
+        text = extract_text_from_url(art['url'])
+        if any(kw.lower() in text for kw in keywords) and is_technical_article(text):
             filtered_articles.append(art)
 
-    print(f"После фильтрации по тексту: {len(filtered_articles)}")
+    print(f"После фильтрации по техническим признакам: {len(filtered_articles)}")
 
     # Убираем дубли
     articles = [a for a in filtered_articles if a.get('url') not in seen_urls]
@@ -192,11 +199,11 @@ def main():
     if not selected:
         print("Нет подходящих новостей.")
         if ADMIN_ID:
-            send_message(ADMIN_ID, "📭 Новых новостей по вашим словам нет.")
+            send_message(ADMIN_ID, "📭 Нет технических новостей по вашим словам.")
         return
 
     # Формируем сообщение
-    msg = f"<b>🌐 Новости по запросу:</b> <code>{', '.join(keywords)}</code>\n\n"
+    msg = f"<b>🔧 Технические новости по запросу:</b> <code>{', '.join(keywords)}</code>\n\n"
     for art in selected:
         title_ru = translate_text(art['title'])
         source = art.get('source', 'Неизвестно')
