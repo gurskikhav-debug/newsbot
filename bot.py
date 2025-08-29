@@ -74,6 +74,27 @@ TECHNICAL_SOURCES_RU = [
     'cherepovetsmet.ru', 'metalinfo.ru', 'engineering-spb.ru'
 ]
 
+# --- Отправка в Telegram ---
+def send_message(chat_id, text, parse_mode='Markdown', disable_preview=False):
+    if not chat_id:
+        print("❌ chat_id не задан")
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        data = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": not disable_preview
+        }
+        response = requests.post(url, data=data, timeout=10)
+        if response.status_code == 200:
+            print(f"✅ Сообщение отправлено в {chat_id}")
+        else:
+            print(f"❌ Ошибка отправки: {response.status_code}, {response.text}")
+    except Exception as e:
+        print(f"❌ Ошибка при отправке: {e}")
+
 # --- Поиск новостей за 3 дня ---
 def search_news():
     articles = []
@@ -144,27 +165,6 @@ def search_news():
 
     return articles
 
-# --- Отправка в Telegram ---
-def send_message(chat_id, text, parse_mode='Markdown', disable_preview=False):
-    if not chat_id:
-        print("❌ chat_id не задан")
-        return
-    try:
-        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        data = {
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": parse_mode,
-            "disable_web_page_preview": not disable_preview
-        }
-        response = requests.post(url, data=data, timeout=10)
-        if response.status_code == 200:
-            print(f"✅ Сообщение отправлено в {chat_id}")
-        else:
-            print(f"❌ Ошибка отправки: {response.status_code}, {response.text}")
-    except Exception as e:
-        print(f"❌ Ошибка при отправке: {e}")
-
 # --- Основная функция ---
 def main():
     print("🚀 Бот запущен (режим GitHub Actions)")
@@ -217,12 +217,8 @@ def main():
 
         print(f"Отправляем: {len(selected)} новостей (50% RU, 50% EN)")
 
-        if not selected:
-            print("Нет новых новостей для отправки.")
-            return
-
-        # --- Отправляем список источников ---
-        sources_msg = "📋 *Проверенные источники:*\n\n"
+        # --- ВСЕГДА отправляем список источников ---
+        sources_msg = "📋 *Используемые источники:*\n\n"
         sources_msg += "*🇷🇺 Русскоязычные:*\n"
         for src in TECHNICAL_SOURCES_RU:
             sources_msg += f"• `{src}`\n"
@@ -237,31 +233,39 @@ def main():
             except ValueError:
                 print(f"❌ ADMIN_ID '{ADMIN_ID}' не является числом")
 
-        # --- Отправляем новости порциями ---
-        batch_size = 5
-        msg = "📬 *Ежедневный дайджест (технические источники)*\n\n"
-        for i, art in enumerate(selected, 1):
-            title_ru = translate_text(art['title'])
-            source = art.get('source', 'Неизвестно')
-            msg += f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}\n\n"
+        # --- Отправляем новости, если есть ---
+        if selected:
+            batch_size = 5
+            msg = "📬 *Ежедневный дайджест (технические источники)*\n\n"
+            for i, art in enumerate(selected, 1):
+                title_ru = translate_text(art['title'])
+                source = art.get('source', 'Неизвестно')
+                msg += f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}\n\n"
 
-            if i % batch_size == 0 or i == len(selected):
-                if ADMIN_ID:
-                    try:
-                        admin_id_int = int(ADMIN_ID)
-                        send_message(admin_id_int, msg, disable_preview=False)
-                    except ValueError:
-                        print(f"❌ ADMIN_ID '{ADMIN_ID}' не является числом")
-                msg = ""
-                if i != len(selected):
-                    msg = "\n"
+                if i % batch_size == 0 or i == len(selected):
+                    if ADMIN_ID:
+                        try:
+                            admin_id_int = int(ADMIN_ID)
+                            send_message(admin_id_int, msg, disable_preview=False)
+                        except ValueError:
+                            print(f"❌ ADMIN_ID '{ADMIN_ID}' не является числом")
+                    msg = ""
+                    if i != len(selected):
+                        msg = "\n"
 
-        # Обновляем кеш
-        for art in selected:
-            url = art.get('url')
-            if url:
-                seen_urls.add(url)
-        save_cache(seen_urls)
+            # Обновляем кеш
+            for art in selected:
+                url = art.get('url')
+                if url:
+                    seen_urls.add(url)
+            save_cache(seen_urls)
+
+        else:
+            # Даже если новостей нет, сообщаем об этом
+            if ADMIN_ID:
+                no_news_msg = "📭 *Новых новостей по вашим темам пока нет.*\n"
+                no_news_msg += "Следующий поиск — завтра в 18:00."
+                send_message(int(ADMIN_ID), no_news_msg, disable_preview=False)
 
         print("✅ Рассылка завершена.")
 
