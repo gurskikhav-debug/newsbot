@@ -1,7 +1,7 @@
 import os
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from deep_translator import GoogleTranslator
 import feedparser
 
@@ -9,8 +9,6 @@ import feedparser
 TOKEN = os.getenv("TOKEN")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 ADMIN_ID = os.getenv("ADMIN_ID")
-BOT_COMMAND = os.getenv("BOT_COMMAND", "/start")
-KEYWORDS_INPUT = os.getenv("KEYWORDS", "")
 
 # --- Кеш ---
 CACHE_FILE = "cache/news_cache.json"
@@ -38,16 +36,21 @@ def translate_text(text):
         print(f"Ошибка перевода: {e}")
         return text
 
+# --- Ключевые слова ---
+KEYWORDS_EN = ['technology', 'AI', 'robotics', '3D printing', 'green energy']
+KEYWORDS_RU = ['технологии', 'ИИ', 'робототехника', '3D печать', 'зелёная энергетика']
+ALL_KEYWORDS = [kw.lower() for kw in KEYWORDS_EN + KEYWORDS_RU]
+
 # --- Поиск новостей ---
-def search_news(keywords):
+def search_news():
     articles = []
 
     # 1. NewsAPI
-    if NEWSAPI_KEY and keywords:
+    if NEWSAPI_KEY:
         try:
             url = "https://newsapi.org/v2/everything"
             params = {
-                'q': ' OR '.join(keywords),
+                'q': ' OR '.join(KEYWORDS_EN),
                 'language': 'en',
                 'sortBy': 'publishedAt',
                 'pageSize': 20,
@@ -68,53 +71,8 @@ def search_news(keywords):
         except Exception as e:
             print(f"NewsAPI ошибка: {e}")
 
-    # 2. RSS из Китая
-    try:
-        feeds = {
-            'xinhua': 'http://www.xinhuanet.com/rss/world.xml',
-            'sina': 'https://rss.sina.com.cn/news/china.xml',
-            'sohu': 'http://rss.news.sohu.com/rss2/news.xml'
-        }
-        for name, feed_url in feeds.items():
-            try:
-                feed = feedparser.parse(feed_url)
-                for entry in feed.entries:
-                    title = entry.title.lower()
-                    if any(kw.lower() in title for kw in keywords):
-                        articles.append({
-                            'title': entry.title,
-                            'url': entry.link,
-                            'source': name,
-                            'published': entry.get('published', 'Неизвестно')
-                        })
-            except Exception as e:
-                print(f"Ошибка RSS {name}: {e}")
-    except Exception as e:
-        print(f"Ошибка парсинга RSS: {e}")
-
-    # 3. Технические сайты
-    try:
-        tech_feeds = {
-            'habr': 'https://habr.com/ru/rss/technology/',
-            'techcrunch': 'https://techcrunch.com/feed/',
-            'wired': 'https://www.wired.com/feed/rss'
-        }
-        for name, feed_url in tech_feeds.items():
-            try:
-                feed = feedparser.parse(feed_url)
-                for entry in feed.entries:
-                    title = entry.title.lower()
-                    if any(kw.lower() in title for kw in keywords):
-                        articles.append({
-                            'title': entry.title,
-                            'url': entry.link,
-                            'source': name,
-                            'published': entry.get('published', 'Неизвестно')
-                        })
-            except Exception as e:
-                print(f"Ошибка RSS {name}: {e}")
-    except Exception as e:
-        print(f"Ошибка технических RSS: {e}")
+    # 2. RSS — временно отключены (не работают)
+    # feeds = { ... }
 
     return articles
 
@@ -142,76 +100,68 @@ def send_message(chat_id, text, parse_mode='Markdown', disable_preview=False):
 # --- Основная функция ---
 def main():
     print("🚀 Бот запущен (режим GitHub Actions)")
+    
+    # Отправляем статус поиска
+    status_msg = "🔍 *Поиск новостей запущен...*\n"
+    status_msg += "• Источник: NewsAPI (международные новости)\n"
+    status_msg += "• Темы: технологии, ИИ, робототехника, 3D печать, зелёная энергетика\n"
+    status_msg += "• Язык: английский + русский\n"
+    status_msg += "• Фильтр дублей: включён\n"
+    
+    if ADMIN_ID:
+        send_message(ADMIN_ID, status_msg, disable_preview=False)
+
     seen_urls = load_cache()
+    raw_articles = search_news()
+    print(f"Получено статей: {len(raw_articles)}")
 
-    if BOT_COMMAND == "/start":
-        msg = (
-            "Привет! Я бот для поиска новостей.\n"
-            "Доступные команды:\n"
-            "🔍 /search — найти новости по ключевым словам\n"
-            "📋 /help — помощь"
-        )
+    if not raw_articles:
+        error_msg = "❌ Новости не найдены.\n"
+        error_msg += "Возможные причины:\n"
+        error_msg += "• Нет активных новостей по теме\n"
+        error_msg += "• Ошибка подключения к NewsAPI\n"
+        error_msg += "• Ключевые слова слишком узкие"
         if ADMIN_ID:
-            send_message(ADMIN_ID, msg)
+            send_message(ADMIN_ID, error_msg)
+        return
 
-    elif BOT_COMMAND == "/search":
-        if not KEYWORDS_INPUT.strip():
-            if ADMIN_ID:
-                send_message(ADMIN_ID, "❌ Не указаны ключевые слова для поиска.")
-            return
+    # Фильтруем по ключевым словам
+    filtered_articles = []
+    for art in raw_articles:
+        title = art['title'].lower()
+        if any(kw in title for kw in ALL_KEYWORDS):
+            filtered_articles.append(art)
 
-        keywords = [kw.strip().lower() for kw in KEYWORDS_INPUT.split(',') if kw.strip()]
-        print(f"🔍 Поиск по: {keywords}")
+    print(f"После фильтрации: {len(filtered_articles)}")
 
-        raw_articles = search_news(keywords)
-        print(f"Получено статей: {len(raw_articles)}")
+    # Убираем дубли
+    articles = [a for a in filtered_articles if a.get('url') not in seen_urls]
 
-        if not raw_articles:
-            if ADMIN_ID:
-                send_message(ADMIN_ID, "❌ Новости не найдены.")
-            return
-
-        articles = [a for a in raw_articles if a.get('url') not in seen_urls]
-        if not articles:
-            if ADMIN_ID:
-                send_message(ADMIN_ID, "📭 Новых новостей по вашим словам нет.")
-            return
-
-        msg = f"📬 *Новости по запросу:* `{', '.join(keywords)}`\n\n"
-        for art in articles[:10]:
-            title_ru = translate_text(art['title'])
-            source = art.get('source', 'Неизвестно')
-            msg += f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}\n\n"
-
+    if not articles:
+        no_new_msg = "📭 Новых новостей по вашим темам нет.\n"
+        no_new_msg += "Все найденные уже были показаны ранее."
         if ADMIN_ID:
-            send_message(ADMIN_ID, msg, disable_preview=False)
+            send_message(ADMIN_ID, no_new_msg)
+        return
 
-        # Обновляем кеш
-        for art in articles:
-            url = art.get('url')
-            if url:
-                seen_urls.add(url)
-        save_cache(seen_urls)
+    # Отправляем первые 10
+    msg = "📬 *Ежедневный дайджест*\n\n"
+    for art in articles[:10]:
+        title_ru = translate_text(art['title'])
+        source = art.get('source', 'Неизвестно')
+        msg += f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}\n\n"
 
-    elif BOT_COMMAND == "/help":
-        help_msg = (
-            "📌 *Помощь*\n\n"
-            "Доступные команды:\n"
-            "🔸 /start — главное меню\n"
-            "🔸 /search — найти новости\n"
-            "🔸 /help — эта справка\n\n"
-            "Чтобы искать, запустите workflow и укажите:\n"
-            "  - command: `/search`\n"
-            "  - keywords: `робототехника, AI, 3D печать`"
-        )
-        if ADMIN_ID:
-            send_message(ADMIN_ID, help_msg, parse_mode='Markdown')
+    if ADMIN_ID:
+        send_message(ADMIN_ID, msg, disable_preview=False)
 
-    else:
-        if ADMIN_ID:
-            send_message(ADMIN_ID, f"❌ Неизвестная команда: {BOT_COMMAND}")
+    # Обновляем кеш
+    for art in articles:
+        url = art.get('url')
+        if url:
+            seen_urls.add(url)
+    save_cache(seen_urls)
 
-    print("✅ Работа завершена.")
+    print("✅ Рассылка завершена.")
 
 # --- Запуск ---
 if __name__ == "__main__":
