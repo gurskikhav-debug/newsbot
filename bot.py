@@ -1,7 +1,7 @@
 import os
 import json
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from deep_translator import GoogleTranslator
 import feedparser
 
@@ -9,7 +9,8 @@ import feedparser
 TOKEN = os.getenv("TOKEN")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 ADMIN_ID = os.getenv("ADMIN_ID")
-KEYWORDS_INPUT = os.getenv("KEYWORDS", "технологии, космос, AI")  # Из workflow
+BOT_COMMAND = os.getenv("BOT_COMMAND", "/start")
+KEYWORDS_INPUT = os.getenv("KEYWORDS", "")
 
 # --- Кеш ---
 CACHE_FILE = "cache/news_cache.json"
@@ -42,7 +43,7 @@ def search_news(keywords):
     articles = []
 
     # 1. NewsAPI
-    if NEWSAPI_KEY:
+    if NEWSAPI_KEY and keywords:
         try:
             url = "https://newsapi.org/v2/everything"
             params = {
@@ -141,52 +142,76 @@ def send_message(chat_id, text, parse_mode='Markdown', disable_preview=False):
 # --- Основная функция ---
 def main():
     print("🚀 Бот запущен (режим GitHub Actions)")
-
-    # Парсим ключевые слова
-    keywords = [kw.strip().lower() for kw in KEYWORDS_INPUT.split(',') if kw.strip()]
-    print(f"🔍 Ключевые слова: {keywords}")
-
-    if not keywords:
-        print("❌ Нет ключевых слов для поиска")
-        return
-
     seen_urls = load_cache()
-    raw_articles = search_news(keywords)
-    print(f"Получено статей: {len(raw_articles)}")
 
-    if not raw_articles:
-        print("❌ Новости не найдены.")
+    if BOT_COMMAND == "/start":
+        msg = (
+            "Привет! Я бот для поиска новостей.\n"
+            "Доступные команды:\n"
+            "🔍 /search — найти новости по ключевым словам\n"
+            "📋 /help — помощь"
+        )
         if ADMIN_ID:
-            send_message(ADMIN_ID, "❌ Новости по заданным словам не найдены.")
-        return
+            send_message(ADMIN_ID, msg)
 
-    # Убираем дубли
-    articles = [a for a in raw_articles if a.get('url') not in seen_urls]
+    elif BOT_COMMAND == "/search":
+        if not KEYWORDS_INPUT.strip():
+            if ADMIN_ID:
+                send_message(ADMIN_ID, "❌ Не указаны ключевые слова для поиска.")
+            return
 
-    if not articles:
-        print("Новости уже были показаны ранее.")
+        keywords = [kw.strip().lower() for kw in KEYWORDS_INPUT.split(',') if kw.strip()]
+        print(f"🔍 Поиск по: {keywords}")
+
+        raw_articles = search_news(keywords)
+        print(f"Получено статей: {len(raw_articles)}")
+
+        if not raw_articles:
+            if ADMIN_ID:
+                send_message(ADMIN_ID, "❌ Новости не найдены.")
+            return
+
+        articles = [a for a in raw_articles if a.get('url') not in seen_urls]
+        if not articles:
+            if ADMIN_ID:
+                send_message(ADMIN_ID, "📭 Новых новостей по вашим словам нет.")
+            return
+
+        msg = f"📬 *Новости по запросу:* `{', '.join(keywords)}`\n\n"
+        for art in articles[:10]:
+            title_ru = translate_text(art['title'])
+            source = art.get('source', 'Неизвестно')
+            msg += f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}\n\n"
+
         if ADMIN_ID:
-            send_message(ADMIN_ID, "📭 Новых новостей по вашим ключевым словам нет.")
-        return
+            send_message(ADMIN_ID, msg, disable_preview=False)
 
-    # Отправляем первые 10
-    msg = f"📬 *Новости по запросу:* `{', '.join(keywords)}`\n\n"
-    for art in articles[:10]:
-        title_ru = translate_text(art['title'])
-        source = art.get('source', 'Неизвестно')
-        msg += f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}\n\n"
+        # Обновляем кеш
+        for art in articles:
+            url = art.get('url')
+            if url:
+                seen_urls.add(url)
+        save_cache(seen_urls)
 
-    if ADMIN_ID:
-        send_message(ADMIN_ID, msg, disable_preview=False)
+    elif BOT_COMMAND == "/help":
+        help_msg = (
+            "📌 *Помощь*\n\n"
+            "Доступные команды:\n"
+            "🔸 /start — главное меню\n"
+            "🔸 /search — найти новости\n"
+            "🔸 /help — эта справка\n\n"
+            "Чтобы искать, запустите workflow и укажите:\n"
+            "  - command: `/search`\n"
+            "  - keywords: `робототехника, AI, 3D печать`"
+        )
+        if ADMIN_ID:
+            send_message(ADMIN_ID, help_msg, parse_mode='Markdown')
 
-    # Обновляем кеш
-    for art in articles:
-        url = art.get('url')
-        if url:
-            seen_urls.add(url)
-    save_cache(seen_urls)
+    else:
+        if ADMIN_ID:
+            send_message(ADMIN_ID, f"❌ Неизвестная команда: {BOT_COMMAND}")
 
-    print("✅ Рассылка завершена.")
+    print("✅ Работа завершена.")
 
 # --- Запуск ---
 if __name__ == "__main__":
