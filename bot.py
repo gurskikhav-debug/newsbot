@@ -62,7 +62,7 @@ KEYWORDS_RU = [
     'исследования и разработки'
 ]
 
-# --- Приоритетные источники (технические) ---
+# --- Проверенные технические источники ---
 TECHNICAL_SOURCES_EN = [
     'engineering.com', 'ieee.org', 'sciencedirect.com', 'springer.com',
     'nature.com', 'researchgate.net', 'arxiv.org', 'phys.org',
@@ -186,7 +186,7 @@ def main():
         def source_priority(article):
             source = article['source'].lower()
             if any(s in source for s in TECHNICAL_SOURCES_EN + TECHNICAL_SOURCES_RU):
-                return 0  # высокий приоритет
+                return 0
             return 1
 
         filtered_articles.sort(key=source_priority)
@@ -197,8 +197,23 @@ def main():
         # Баланс: 50% RU, 50% EN
         ru_articles = [a for a in articles if a.get('lang') == 'ru']
         en_articles = [a for a in articles if a.get('lang') == 'en']
-        max_count = min(len(ru_articles), len(en_articles), 10)
-        selected = (ru_articles[:max_count] + en_articles[:max_count])[:20]
+
+        # Целевые количества
+        target_count = 10
+        max_total = 20
+
+        # Докачиваем до 10, если не хватает
+        selected_ru = ru_articles[:target_count]
+        selected_en = en_articles[:target_count]
+
+        while len(selected_ru) + len(selected_en) < target_count and (len(ru_articles) > len(selected_ru) or len(en_articles) > len(selected_en)):
+            if len(ru_articles) > len(selected_ru):
+                selected_ru.append(ru_articles[len(selected_ru)])
+            if len(en_articles) > len(selected_en) and len(selected_ru) + len(selected_en) < target_count:
+                selected_en.append(en_articles[len(selected_en)])
+
+        # Объединяем и ограничиваем 20
+        selected = (selected_ru + selected_en)[:max_total]
 
         print(f"Отправляем: {len(selected)} новостей (50% RU, 50% EN)")
 
@@ -206,7 +221,23 @@ def main():
             print("Нет новых новостей для отправки.")
             return
 
-        # Отправляем по 5 новостей в сообщении
+        # --- Отправляем список источников ---
+        sources_msg = "📋 *Проверенные источники:*\n\n"
+        sources_msg += "*🇷🇺 Русскоязычные:*\n"
+        for src in TECHNICAL_SOURCES_RU:
+            sources_msg += f"• `{src}`\n"
+        sources_msg += "\n*🌍 Англоязычные:*\n"
+        for src in TECHNICAL_SOURCES_EN:
+            sources_msg += f"• `{src}`\n"
+
+        if ADMIN_ID:
+            try:
+                admin_id_int = int(ADMIN_ID)
+                send_message(admin_id_int, sources_msg, disable_preview=False)
+            except ValueError:
+                print(f"❌ ADMIN_ID '{ADMIN_ID}' не является числом")
+
+        # --- Отправляем новости порциями ---
         batch_size = 5
         msg = "📬 *Ежедневный дайджест (технические источники)*\n\n"
         for i, art in enumerate(selected, 1):
@@ -221,9 +252,9 @@ def main():
                         send_message(admin_id_int, msg, disable_preview=False)
                     except ValueError:
                         print(f"❌ ADMIN_ID '{ADMIN_ID}' не является числом")
-                msg = ""  # Сбрасываем для следующей порции
+                msg = ""
                 if i != len(selected):
-                    msg = "\n"  # Начинаем новую
+                    msg = "\n"
 
         # Обновляем кеш
         for art in selected:
