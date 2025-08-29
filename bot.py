@@ -46,7 +46,8 @@ KEYWORDS_EN = [
     'material properties', 'thermal conductivity', 'mechanical strength',
     'AI in industry', 'industrial automation', 'robotic systems',
     'green hydrogen', 'battery technology', 'energy storage',
-    'technical specifications', 'engineering design', 'R&D innovation'
+    'technical specifications', 'engineering design', 'R&D innovation',
+    'startup', 'tech startup', 'innovation hub', 'tech review'
 ]
 
 KEYWORDS_RU = [
@@ -59,19 +60,22 @@ KEYWORDS_RU = [
     'механические свойства', 'ИИ в промышленности', 'автоматизация',
     'роботизированные системы', 'зелёный водород', 'технология аккумуляторов',
     'накопление энергии', 'технические характеристики', 'инженерный дизайн',
-    'исследования и разработки'
+    'исследования и разработки', 'стартап', 'инновационный хаб', 'обзор технологий'
 ]
 
-# --- Проверенные технические источники ---
+# --- Проверенные технические источники (компании, обзоры, стартапы) ---
 TECHNICAL_SOURCES_EN = [
     'engineering.com', 'ieee.org', 'sciencedirect.com', 'springer.com',
     'nature.com', 'researchgate.net', 'arxiv.org', 'phys.org',
-    'machinedesign.com', 'designnews.com', 'sae.org'
+    'machinedesign.com', 'designnews.com', 'sae.org',
+    'techcrunch.com', 'wired.com', 'arstechnica.com', 'engadget.com',
+    '3dprint.com', 'tesla.com', 'spacex.com', 'nasa.gov'
 ]
 
 TECHNICAL_SOURCES_RU = [
     'habr.com', 'nplus1.ru', 'scientificrussia.com', 'vtor-ch.ru',
-    'cherepovetsmet.ru', 'metalinfo.ru', 'engineering-spb.ru'
+    'cherepovetsmet.ru', 'metalinfo.ru', 'engineering-spb.ru',
+    'vc.ru', 'habr.com/flows/develop', 'startup.ru'
 ]
 
 # --- Отправка в Telegram ---
@@ -142,14 +146,16 @@ def search_news():
         feeds = {
             'habr': 'https://habr.com/ru/rss/technology/',
             'nplus1': 'https://nplus1.ru/rss',
-            'engineering': 'https://www.engineering.com/rss'
+            'engineering': 'https://www.engineering.com/rss',
+            'techcrunch': 'https://techcrunch.com/feed/',
+            'wired': 'https://www.wired.com/feed/rss'
         }
         for name, feed_url in feeds.items():
             try:
                 feed = feedparser.parse(feed_url)
                 for entry in feed.entries:
                     title = entry.title.lower()
-                    if any(kw.lower() in title for kw in ['metal', 'tech', 'ai', 'alloy', 'engineering']):
+                    if any(kw.lower() in title for kw in ['metal', 'tech', 'ai', 'alloy', 'engineering', 'startup']):
                         lang = 'ru' if 'habr' in name or 'nplus1' in name else 'en'
                         articles.append({
                             'title': entry.title,
@@ -217,7 +223,26 @@ def main():
 
         print(f"Отправляем: {len(selected)} новостей (50% RU, 50% EN)")
 
-        # --- ВСЕГДА отправляем список источников ---
+        # --- Отправляем логику поиска ---
+        logic_msg = "🔍 *Логика поиска новостей:*\n\n"
+        logic_msg += "Бот ищет новости по:\n"
+        logic_msg += "• Технологическим компаниям: `Tesla`, `SpaceX`, `NASA`, `3DPrint`\n"
+        logic_msg += "• Промышленным и производственным сайтам\n"
+        logic_msg += "• Технологическим обзорам: `TechCrunch`, `Wired`, `Ars Technica`\n"
+        logic_msg += "• Стартапам и инновационным хабам\n"
+        logic_msg += "• Ключевым словам в области металлургии, ИИ, робототехники\n"
+        logic_msg += "• Приоритет — технические источники\n"
+        logic_msg += "• 50% русскоязычных, 50% англоязычных\n"
+        logic_msg += "• Новости за последние 3 дня\n"
+
+        if ADMIN_ID:
+            try:
+                admin_id_int = int(ADMIN_ID)
+                send_message(admin_id_int, logic_msg, disable_preview=False)
+            except ValueError:
+                print(f"❌ ADMIN_ID '{ADMIN_ID}' не является числом")
+
+        # --- Отправляем список источников ---
         sources_msg = "📋 *Используемые источники:*\n\n"
         sources_msg += "*🇷🇺 Русскоязычные:*\n"
         for src in TECHNICAL_SOURCES_RU:
