@@ -1,15 +1,16 @@
-name: 🤖 Новостной бот (с ключевыми словами)
+name: 🤖 Telegram Бот (с меню и поиском)
 
 on:
   workflow_dispatch:
     inputs:
-      keywords:
-        description: 'Введите ключевые слова для поиска (через запятую)'
+      command:
+        description: 'Команда для бота (например: /start или /search)'
         required: true
-        default: 'технологии, космос, AI'
-
-  schedule:
-    - cron: '0 15 * * *'   # Ежедневно в 18:00 МСК (опционально)
+        default: '/start'
+      keywords:
+        description: 'Ключевые слова для поиска (если /search)'
+        required: false
+        default: ''
 
 jobs:
   run_bot:
@@ -49,6 +50,7 @@ jobs:
           NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
           ADMIN_ID: ${{ secrets.ADMIN_ID }}
           GITHUB_ACTIONS: "true"
+          BOT_COMMAND: ${{ github.event.inputs.command }}
           KEYWORDS: ${{ github.event.inputs.keywords }}
         run: python bot.py
 
