@@ -4,11 +4,16 @@ import requests
 from datetime import datetime, timedelta
 from deep_translator import GoogleTranslator
 import feedparser
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # --- Настройки ---
 TOKEN = os.getenv("TOKEN")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 ADMIN_ID = os.getenv("ADMIN_ID")
+
+# --- Состояния ---
+AWAITING_KEYWORDS = "awaiting_keywords"
 
 # --- Кеш ---
 CACHE_FILE = "cache/news_cache.json"
@@ -36,260 +41,168 @@ def translate_text(text):
         print(f"Ошибка перевода: {e}")
         return text
 
-# --- Ключевые слова (новые темы) ---
-KEYWORDS_EN = [
-    'robotics', 'industrial robot', 'robotic arm', 'automation',
-    'metallurgy', 'ferrous metallurgy', 'non-ferrous metallurgy',
-    'steel production', 'metal processing',
-    'additive manufacturing', '3D printing', '3D printing metal', 'AM',
-    'green energy', 'renewable energy', 'solar power', 'wind energy',
-    'hydrogen energy', 'battery technology', 'energy storage'
-]
-
-KEYWORDS_RU = [
-    'робототехника', 'промышленный робот', 'роботизированная рука', 'автоматизация',
-    'металлургия', 'черная металлургия', 'цветная металлургия',
-    'производство стали', 'обработка металлов',
-    'аддитивные технологии', '3D печать', '3D-печать', 'аддитив',
-    'зелёная энергетика', 'возобновляемая энергия', 'солнечная энергия',
-    'ветровая энергия', 'водородная энергетика', 'аккумуляторы', 'хранение энергии'
-]
-
-# --- Проверенные технические источники ---
-TECHNICAL_SOURCES_EN = [
-    'engineering.com', 'ieee.org', 'sciencedirect.com', 'springer.com',
-    'nature.com', 'researchgate.net', 'arxiv.org', 'phys.org',
-    'machinedesign.com', 'designnews.com', 'sae.org',
-    'techcrunch.com', 'wired.com', 'arstechnica.com', 'engadget.com',
-    '3dprint.com', 'tesla.com', 'spacex.com', 'nasa.gov'
-]
-
-TECHNICAL_SOURCES_RU = [
-    'habr.com', 'nplus1.ru', 'scientificrussia.com', 'vtor-ch.ru',
-    'cherepovetsmet.ru', 'metalinfo.ru', 'engineering-spb.ru',
-    'vc.ru', 'habr.com/flows/develop', 'startup.ru'
-]
-
-# --- Отправка в Telegram ---
-def send_message(chat_id, text, parse_mode='Markdown', disable_preview=False):
-    if not chat_id:
-        print("❌ chat_id не задан")
-        return
-    try:
-        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        data = {
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": parse_mode,
-            "disable_web_page_preview": not disable_preview
-        }
-        response = requests.post(url, data=data, timeout=10)
-        if response.status_code == 200:
-            print(f"✅ Сообщение отправлено в {chat_id}")
-        else:
-            print(f"❌ Ошибка отправки: {response.status_code}, {response.text}")
-    except Exception as e:
-        print(f"❌ Ошибка при отправке: {e}")
-
-# --- Поиск новостей за 3 дня ---
-def search_news():
+# --- Поиск новостей ---
+def search_news(keywords):
     articles = []
 
-    # 1. NewsAPI — с фильтром по дате и группировкой запросов
+    # 1. NewsAPI
     if NEWSAPI_KEY:
-        from_date = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d')
+        try:
+            url = "https://newsapi.org/v2/everything"
+            params = {
+                'q': ' OR '.join(keywords),
+                'language': 'en',
+                'sortBy': 'publishedAt',
+                'pageSize': 20,
+                'apiKey': NEWSAPI_KEY
+            }
+            r = requests.get(url, params=params, timeout=15)
+            if r.status_code == 200:
+                data = r.json()
+                for item in data.get('articles', []):
+                    articles.append({
+                        'title': item['title'],
+                        'url': item['url'],
+                        'source': item['source']['name'],
+                        'published': item.get('publishedAt', 'Неизвестно')
+                    })
+            else:
+                print(f"NewsAPI error {r.status_code}: {r.text}")
+        except Exception as e:
+            print(f"NewsAPI ошибка: {e}")
 
-        queries = [
-            ' OR '.join(KEYWORDS_EN[:8]),
-            ' OR '.join(KEYWORDS_EN[8:16]),
-            ' OR '.join(KEYWORDS_EN[16:])
-        ]
-
-        for query in queries:
-            try:
-                url = "https://newsapi.org/v2/everything"
-                params = {
-                    'q': query,
-                    'from': from_date,
-                    'language': 'en',
-                    'sortBy': 'publishedAt',
-                    'pageSize': 20,
-                    'apiKey': NEWSAPI_KEY
-                }
-                r = requests.get(url, params=params, timeout=15)
-                if r.status_code == 200:
-                    data = r.json()
-                    for item in data.get('articles', []):
-                        articles.append({
-                            'title': item['title'],
-                            'url': item['url'],
-                            'source': item['source']['name'],
-                            'published': item.get('publishedAt', 'Неизвестно'),
-                            'lang': 'en'
-                        })
-                else:
-                    print(f"NewsAPI error {r.status_code}: {r.text}")
-            except Exception as e:
-                print(f"NewsAPI ошибка: {e}")
-
-    # 2. RSS из технических источников
+    # 2. RSS из Китая
     try:
         feeds = {
-            'habr': 'https://habr.com/ru/rss/technology/',
-            'nplus1': 'https://nplus1.ru/rss',
-            'engineering': 'https://www.engineering.com/rss',
-            'techcrunch': 'https://techcrunch.com/feed/',
-            'wired': 'https://www.wired.com/feed/rss'
+            'xinhua': 'http://www.xinhuanet.com/rss/world.xml',
+            'sina': 'https://rss.sina.com.cn/news/china.xml',
+            'sohu': 'http://rss.news.sohu.com/rss2/news.xml'
         }
         for name, feed_url in feeds.items():
             try:
                 feed = feedparser.parse(feed_url)
                 for entry in feed.entries:
                     title = entry.title.lower()
-                    if any(kw.lower() in title for kw in ['robot', 'metallurgy', '3d print', 'energy', 'additive']):
-                        lang = 'ru' if 'habr' in name or 'nplus1' in name else 'en'
+                    if any(kw.lower() in title for kw in keywords):
                         articles.append({
                             'title': entry.title,
                             'url': entry.link,
                             'source': name,
-                            'published': entry.get('published', 'Неизвестно'),
-                            'lang': lang
+                            'published': entry.get('published', 'Неизвестно')
                         })
             except Exception as e:
                 print(f"Ошибка RSS {name}: {e}")
     except Exception as e:
         print(f"Ошибка парсинга RSS: {e}")
 
+    # 3. Технические сайты
+    try:
+        tech_feeds = {
+            'habr': 'https://habr.com/ru/rss/technology/',
+            'techcrunch': 'https://techcrunch.com/feed/',
+            'wired': 'https://www.wired.com/feed/rss'
+        }
+        for name, feed_url in tech_feeds.items():
+            try:
+                feed = feedparser.parse(feed_url)
+                for entry in feed.entries:
+                    title = entry.title.lower()
+                    if any(kw.lower() in title for kw in keywords):
+                        articles.append({
+                            'title': entry.title,
+                            'url': entry.link,
+                            'source': name,
+                            'published': entry.get('published', 'Неизвестно')
+                        })
+            except Exception as e:
+                print(f"Ошибка RSS {name}: {e}")
+    except Exception as e:
+        print(f"Ошибка технических RSS: {e}")
+
     return articles
 
-# --- Основная функция ---
-def main():
-    print("🚀 Бот запущен (режим GitHub Actions)")
-    try:
-        seen_urls = load_cache()
-        raw_articles = search_news()
-        print(f"Получено статей: {len(raw_articles)}")
+# --- Команды ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("🔍 Найти новости", callback_data='manual_search')],
+        [InlineKeyboardButton("📋 Помощь", callback_data='help')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "Привет! Я бот для поиска новостей.\nВыберите действие:",
+        reply_markup=reply_markup
+    )
 
-        # Фильтруем по ключевым словам
-        filtered_articles = []
-        for art in raw_articles:
-            title = art['title'].lower()
-            if any(kw.lower() in title for kw in KEYWORDS_RU + KEYWORDS_EN):
-                filtered_articles.append(art)
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-        print(f"После фильтрации: {len(filtered_articles)}")
+    if query.data == 'manual_search':
+        await query.edit_message_text("Введите **ключевые слова** для поиска.\nНапример: `робототехника, 3D печать`")
+        context.user_data['state'] = AWAITING_KEYWORDS
 
-        # Сортируем по приоритету источников
-        def source_priority(article):
-            source = article['source'].lower()
-            if any(s in source for s in TECHNICAL_SOURCES_EN + TECHNICAL_SOURCES_RU):
-                return 0
-            return 1
+    elif query.data == 'help':
+        await query.edit_message_text(
+            "Используйте:\n"
+            "🔍 Найти новости — ищите по теме\n"
+            "Все новости с переводом на русский.\n"
+            "Поиск ведётся по всем доступным источникам."
+        )
 
-        filtered_articles.sort(key=source_priority)
+async def handle_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get('state') != AWAITING_KEYWORDS:
+        return
 
-        # Убираем дубли
-        articles = [a for a in filtered_articles if a.get('url') not in seen_urls]
+    keywords_input = update.message.text.strip()
+    if not keywords_input:
+        await update.message.reply_text("Введите хотя бы одно слово.")
+        return
 
-        # Баланс: 50% RU, 50% EN
-        ru_articles = [a for a in articles if a.get('lang') == 'ru']
-        en_articles = [a for a in articles if a.get('lang') == 'en']
+    keywords = [kw.strip().lower() for kw in keywords_input.split(',') if kw.strip()]
+    await update.message.reply_text(f"🔍 Ищу новости по: *{', '.join(keywords)}*...", parse_mode='Markdown')
 
-        # Целевые количества
-        target_count = 10
-        max_total = 20
+    # Поиск
+    raw_articles = search_news(keywords)
+    print(f"Получено статей: {len(raw_articles)}")
 
-        # Докачиваем до 10, если не хватает
-        selected_ru = ru_articles[:target_count]
-        selected_en = en_articles[:target_count]
+    if not raw_articles:
+        await update.message.reply_text("❌ Новости не найдены.")
+        context.user_data['state'] = None
+        return
 
-        while len(selected_ru) + len(selected_en) < target_count and (len(ru_articles) > len(selected_ru) or len(en_articles) > len(selected_en)):
-            if len(ru_articles) > len(selected_ru):
-                selected_ru.append(ru_articles[len(selected_ru)])
-            if len(en_articles) > len(selected_en) and len(selected_ru) + len(selected_en) < target_count:
-                selected_en.append(en_articles[len(selected_en)])
+    # Убираем дубли
+    seen_urls = load_cache()
+    articles = [a for a in raw_articles if a.get('url') not in seen_urls]
 
-        # Объединяем и ограничиваем 20
-        selected = (selected_ru + selected_en)[:max_total]
+    if not articles:
+        await update.message.reply_text("Новости уже были показаны ранее.")
+        context.user_data['state'] = None
+        return
 
-        print(f"Отправляем: {len(selected)} новостей (50% RU, 50% EN)")
+    # Показываем первые 10
+    for art in articles[:10]:
+        title_ru = translate_text(art['title'])
+        source = art.get('source', 'Неизвестно')
+        msg = f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}"
+        await update.message.reply_text(msg, parse_mode='Markdown', disable_web_page_preview=False)
 
-        # --- Отправляем логику поиска ---
-        logic_msg = "🔍 *Логика поиска новостей:*\n\n"
-        logic_msg += "Бот ищет новости по темам:\n"
-        logic_msg += "• Робототехника\n"
-        logic_msg += "• Металлургия\n"
-        logic_msg += "• Аддитивные технологии и 3D-печать\n"
-        logic_msg += "• Зелёная энергетика\n"
-        logic_msg += "• Приоритет — технические источники\n"
-        logic_msg += "• 50% русскоязычных, 50% англоязычных\n"
-        logic_msg += "• Новости за последние 3 дня\n"
+    # Обновляем кеш
+    for art in articles:
+        url = art.get('url')
+        if url:
+            seen_urls.add(url)
+    save_cache(seen_urls)
 
-        if ADMIN_ID:
-            try:
-                admin_id_int = int(ADMIN_ID)
-                send_message(admin_id_int, logic_msg, disable_preview=False)
-            except ValueError:
-                print(f"❌ ADMIN_ID '{ADMIN_ID}' не является числом")
-
-        # --- Отправляем список источников ---
-        sources_msg = "📋 *Используемые источники:*\n\n"
-        sources_msg += "*🇷🇺 Русскоязычные:*\n"
-        for src in TECHNICAL_SOURCES_RU:
-            sources_msg += f"• `{src}`\n"
-        sources_msg += "\n*🌍 Англоязычные:*\n"
-        for src in TECHNICAL_SOURCES_EN:
-            sources_msg += f"• `{src}`\n"
-
-        if ADMIN_ID:
-            try:
-                admin_id_int = int(ADMIN_ID)
-                send_message(admin_id_int, sources_msg, disable_preview=False)
-            except ValueError:
-                print(f"❌ ADMIN_ID '{ADMIN_ID}' не является числом")
-
-        # --- Отправляем новости, если есть ---
-        if selected:
-            batch_size = 5
-            msg = "📬 *Ежедневный дайджест (технические источники)*\n\n"
-            for i, art in enumerate(selected, 1):
-                title_ru = translate_text(art['title'])
-                source = art.get('source', 'Неизвестно')
-                msg += f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}\n\n"
-
-                if i % batch_size == 0 or i == len(selected):
-                    if ADMIN_ID:
-                        try:
-                            admin_id_int = int(ADMIN_ID)
-                            send_message(admin_id_int, msg, disable_preview=False)
-                        except ValueError:
-                            print(f"❌ ADMIN_ID '{ADMIN_ID}' не является числом")
-                    msg = ""
-                    if i != len(selected):
-                        msg = "\n"
-
-            # Обновляем кеш
-            for art in selected:
-                url = art.get('url')
-                if url:
-                    seen_urls.add(url)
-            save_cache(seen_urls)
-
-        else:
-            # Даже если новостей нет
-            if ADMIN_ID:
-                no_news_msg = "📭 *Новых новостей по вашим темам пока нет.*\n"
-                no_news_msg += "Следующий поиск — завтра в 18:00."
-                send_message(int(ADMIN_ID), no_news_msg, disable_preview=False)
-
-        print("✅ Рассылка завершена.")
-
-    except Exception as e:
-        error_msg = f"{type(e).__name__}: {str(e)[:500]}"
-        print(f"🔴 Ошибка: {error_msg}")
-        if ADMIN_ID and TOKEN:
-            send_message(ADMIN_ID, f"❌ Ошибка: `{error_msg}`")
+    context.user_data['state'] = None
 
 # --- Запуск ---
 if __name__ == "__main__":
-    main()
+    print("🚀 Бот запущен в режиме Telegram polling")
+
+    application = Application.builder().token(TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_keywords))
+
+    application.run_polling()
