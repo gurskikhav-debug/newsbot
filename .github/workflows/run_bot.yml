@@ -1,0 +1,59 @@
+name: 🤖 Новостной бот (с ключевыми словами)
+
+on:
+  workflow_dispatch:
+    inputs:
+      keywords:
+        description: 'Введите ключевые слова для поиска (через запятую)'
+        required: true
+        default: 'технологии, космос, AI'
+
+  schedule:
+    - cron: '0 15 * * *'   # Ежедневно в 18:00 МСК (опционально)
+
+jobs:
+  run_bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Получить код
+        uses: actions/checkout@v4
+
+      - name: 🐍 Установить Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Установить зависимости
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🔐 Восстановить кеш новостей
+        uses: actions/cache@v3
+        id: cache-news
+        with:
+          path: cache/news_cache.json
+          key: news-cache-v1
+
+      - name: 📁 Создать папку cache
+        run: mkdir -p cache
+
+      - name: 📄 Инициализировать кеш (если отсутствует)
+        if: steps.cache-news.outputs.cache-hit != 'true'
+        run: echo "[]" > cache/news_cache.json
+
+      - name: 🏃 Запустить бота
+        env:
+          TOKEN: ${{ secrets.TOKEN }}
+          NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+          GITHUB_ACTIONS: "true"
+          KEYWORDS: ${{ github.event.inputs.keywords }}
+        run: python bot.py
+
+      - name: 💾 Сохранить обновлённый кеш
+        uses: actions/cache@v3
+        with:
+          path: cache/news_cache.json
+          key: news-cache-v1
