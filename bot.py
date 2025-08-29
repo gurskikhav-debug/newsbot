@@ -4,16 +4,12 @@ import requests
 from datetime import datetime, timedelta
 from deep_translator import GoogleTranslator
 import feedparser
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # --- Настройки ---
 TOKEN = os.getenv("TOKEN")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 ADMIN_ID = os.getenv("ADMIN_ID")
-
-# --- Состояния ---
-AWAITING_KEYWORDS = "awaiting_keywords"
+KEYWORDS_INPUT = os.getenv("KEYWORDS", "технологии, космос, AI")  # Из workflow
 
 # --- Кеш ---
 CACHE_FILE = "cache/news_cache.json"
@@ -121,70 +117,67 @@ def search_news(keywords):
 
     return articles
 
-# --- Команды ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("🔍 Найти новости", callback_data='manual_search')],
-        [InlineKeyboardButton("📋 Помощь", callback_data='help')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "Привет! Я бот для поиска новостей.\nВыберите действие:",
-        reply_markup=reply_markup
-    )
+# --- Отправка в Telegram ---
+def send_message(chat_id, text, parse_mode='Markdown', disable_preview=False):
+    if not chat_id:
+        print("❌ chat_id не задан")
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        data = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": not disable_preview
+        }
+        response = requests.post(url, data=data, timeout=10)
+        if response.status_code == 200:
+            print(f"✅ Сообщение отправлено в {chat_id}")
+        else:
+            print(f"❌ Ошибка отправки: {response.status_code}, {response.text}")
+    except Exception as e:
+        print(f"❌ Ошибка при отправке: {e}")
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+# --- Основная функция ---
+def main():
+    print("🚀 Бот запущен (режим GitHub Actions)")
 
-    if query.data == 'manual_search':
-        await query.edit_message_text("Введите **ключевые слова** для поиска.\nНапример: `робототехника, 3D печать`")
-        context.user_data['state'] = AWAITING_KEYWORDS
+    # Парсим ключевые слова
+    keywords = [kw.strip().lower() for kw in KEYWORDS_INPUT.split(',') if kw.strip()]
+    print(f"🔍 Ключевые слова: {keywords}")
 
-    elif query.data == 'help':
-        await query.edit_message_text(
-            "Используйте:\n"
-            "🔍 Найти новости — ищите по теме\n"
-            "Все новости с переводом на русский.\n"
-            "Поиск ведётся по всем доступным источникам."
-        )
-
-async def handle_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('state') != AWAITING_KEYWORDS:
+    if not keywords:
+        print("❌ Нет ключевых слов для поиска")
         return
 
-    keywords_input = update.message.text.strip()
-    if not keywords_input:
-        await update.message.reply_text("Введите хотя бы одно слово.")
-        return
-
-    keywords = [kw.strip().lower() for kw in keywords_input.split(',') if kw.strip()]
-    await update.message.reply_text(f"🔍 Ищу новости по: *{', '.join(keywords)}*...", parse_mode='Markdown')
-
-    # Поиск
+    seen_urls = load_cache()
     raw_articles = search_news(keywords)
     print(f"Получено статей: {len(raw_articles)}")
 
     if not raw_articles:
-        await update.message.reply_text("❌ Новости не найдены.")
-        context.user_data['state'] = None
+        print("❌ Новости не найдены.")
+        if ADMIN_ID:
+            send_message(ADMIN_ID, "❌ Новости по заданным словам не найдены.")
         return
 
     # Убираем дубли
-    seen_urls = load_cache()
     articles = [a for a in raw_articles if a.get('url') not in seen_urls]
 
     if not articles:
-        await update.message.reply_text("Новости уже были показаны ранее.")
-        context.user_data['state'] = None
+        print("Новости уже были показаны ранее.")
+        if ADMIN_ID:
+            send_message(ADMIN_ID, "📭 Новых новостей по вашим ключевым словам нет.")
         return
 
-    # Показываем первые 10
+    # Отправляем первые 10
+    msg = f"📬 *Новости по запросу:* `{', '.join(keywords)}`\n\n"
     for art in articles[:10]:
         title_ru = translate_text(art['title'])
         source = art.get('source', 'Неизвестно')
-        msg = f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}"
-        await update.message.reply_text(msg, parse_mode='Markdown', disable_web_page_preview=False)
+        msg += f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}\n\n"
+
+    if ADMIN_ID:
+        send_message(ADMIN_ID, msg, disable_preview=False)
 
     # Обновляем кеш
     for art in articles:
@@ -193,16 +186,8 @@ async def handle_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
             seen_urls.add(url)
     save_cache(seen_urls)
 
-    context.user_data['state'] = None
+    print("✅ Рассылка завершена.")
 
 # --- Запуск ---
 if __name__ == "__main__":
-    print("🚀 Бот запущен в режиме Telegram polling")
-
-    application = Application.builder().token(TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_keywords))
-
-    application.run_polling()
+    main()
