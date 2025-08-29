@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from deep_translator import GoogleTranslator
 import feedparser
 from bs4 import BeautifulSoup
+from urllib3.exceptions import ConnectTimeoutError, MaxRetryError
+import re
 
 # --- Настройки ---
 TOKEN = os.getenv("TOKEN")
@@ -42,19 +44,24 @@ def translate_text(text):
 def extract_text_from_url(url):
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
         }
-        r = requests.get(url, timeout=10, headers=headers)
+        r = requests.get(url, timeout=15, headers=headers)
         r.raise_for_status()
         soup = BeautifulSoup(r.content, 'html.parser')
 
         # Удаляем ненужное
-        for element in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
+        for element in soup(['script', 'style', 'nav', 'footer', 'header', 'aside', 'iframe']):
             element.decompose()
 
         text = soup.get_text(separator=' ', strip=True)
         return text.lower()
-    except Exception as e:
+    except (requests.exceptions.RequestException, Exception) as e:
         print(f"❌ Ошибка при парсинге {url}: {e}")
         return ""
 
@@ -81,14 +88,12 @@ def search_news(keywords):
             if r.status_code == 200:
                 data = r.json()
                 for item in data.get('articles', []):
-                    # Проверяем содержимое страницы
-                    if contains_keywords_in_text(item['url'], keywords):
-                        articles.append({
-                            'title': item['title'],
-                            'url': item['url'],
-                            'source': item['source']['name'],
-                            'published': item.get('publishedAt', 'Неизвестно')
-                        })
+                    articles.append({
+                        'title': item['title'],
+                        'url': item['url'],
+                        'source': item['source']['name'],
+                        'published': item.get('publishedAt', 'Неизвестно')
+                    })
             else:
                 print(f"NewsAPI error {r.status_code}: {r.text}")
         except Exception as e:
@@ -109,14 +114,12 @@ def search_news(keywords):
                 for entry in feed.entries:
                     title = entry.title.lower()
                     if any(kw.lower() in title for kw in keywords):
-                        # Проверяем содержимое статьи
-                        if contains_keywords_in_text(entry.link, keywords):
-                            articles.append({
-                                'title': entry.title,
-                                'url': entry.link,
-                                'source': name,
-                                'published': entry.get('published', 'Неизвестно')
-                            })
+                        articles.append({
+                            'title': entry.title,
+                            'url': entry.link,
+                            'source': name,
+                            'published': entry.get('published', 'Неизвестно')
+                        })
             except Exception as e:
                 print(f"Ошибка RSS {name}: {e}")
     except Exception as e:
@@ -125,11 +128,13 @@ def search_news(keywords):
     return articles
 
 # --- Отправка в Telegram ---
-def send_message(chat_id, text, parse_mode='Markdown', disable_preview=False):
+def send_message(chat_id, text, parse_mode='HTML', disable_preview=False):
     if not chat_id:
         print("❌ chat_id не задан")
         return
     try:
+        # Экранирование для HTML
+        text = text.replace('<', '<').replace('>', '>')
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         data = {
             "chat_id": chat_id,
@@ -159,18 +164,6 @@ def main():
             send_message(ADMIN_ID, "❌ Не указаны ключевые слова для поиска.")
         return
 
-    # Статус поиска
-    status_msg = "🔍 *Запуск поиска по содержимому сайтов...*\n\n"
-    status_msg += "🌐 Источники:\n"
-    status_msg += "• NewsAPI\n"
-    status_msg += "• Habr, N+1, Engineering.com\n"
-    status_msg += "• TechCrunch, Wired\n"
-    status_msg += "🔍 Темы: `" + ', '.join(keywords) + "`\n"
-    status_msg += "⏳ Поиск может занять 1-2 минуты..."
-
-    if ADMIN_ID:
-        send_message(ADMIN_ID, status_msg, disable_preview=False)
-
     seen_urls = load_cache()
     raw_articles = search_news(keywords)
     print(f"Получено статей: {len(raw_articles)}")
@@ -181,25 +174,35 @@ def main():
             send_message(ADMIN_ID, "❌ Новости по заданным словам не найдены.")
         return
 
-    # Убираем дубли
-    articles = [a for a in raw_articles if a.get('url') not in seen_urls]
+    # Фильтруем по содержимому (если нужно)
+    filtered_articles = []
+    for art in raw_articles:
+        if contains_keywords_in_text(art['url'], keywords):
+            filtered_articles.append(art)
 
-    if not articles:
-        print("Новости уже были показаны ранее.")
-        if ADMIN_ID:
-            send_message(ADMIN_ID, "📭 Новых новостей по вашим словам нет.")
-        return
+    print(f"После фильтрации по тексту: {len(filtered_articles)}")
+
+    # Убираем дубли
+    articles = [a for a in filtered_articles if a.get('url') not in seen_urls]
 
     # Ограничиваем 20 новостями
     selected = articles[:20]
     print(f"Отправляем: {len(selected)} новостей")
 
+    if not selected:
+        print("Нет подходящих новостей.")
+        if ADMIN_ID:
+            send_message(ADMIN_ID, "📭 Новых новостей по вашим словам нет.")
+        return
+
     # Формируем сообщение
-    msg = f"🌐 *Новости по запросу:* `{', '.join(keywords)}`\n\n"
+    msg = f"<b>🌐 Новости по запросу:</b> <code>{', '.join(keywords)}</code>\n\n"
     for art in selected:
         title_ru = translate_text(art['title'])
         source = art.get('source', 'Неизвестно')
-        msg += f"📌 *{title_ru}*\n🌐 {source}\n🔗 {art['url']}\n\n"
+        msg += f"📌 <b>{title_ru}</b>\n"
+        msg += f"🌐 {source}\n"
+        msg += f"🔗 <a href='{art['url']}'>Ссылка</a>\n\n"
 
     # Отправляем
     if ADMIN_ID:
