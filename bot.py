@@ -43,7 +43,9 @@ TECH_INDICATORS = [
     'характеристики', 'свойства', 'применение', 'используется в', 'технология', 'изобретение',
     'новинка', 'разработка', 'физическое явление', 'эффект', 'механизм', 'работа', 'принцип',
     'улучшение', 'совершенствование', 'производительность', 'эффективность', 'инновация',
-    'влияние на рынок', 'рыночный потенциал', 'экономия', 'автоматизация', 'робот'
+    'влияние на рынок', 'рыночный потенциал', 'экономия', 'автоматизация', 'робот',
+    'material properties', 'technical specifications', 'application in engineering',
+    'physical phenomenon', 'innovation', 'market impact', 'improvement', 'efficiency'
 ]
 
 # --- Извлечение текста со страницы ---
@@ -71,21 +73,18 @@ def extract_text_from_url(url):
 def is_technical_article(text):
     return any(indicator in text for indicator in [w.lower() for w in TECH_INDICATORS])
 
-# --- Проверка, содержит ли статья ключевые слова в заголовке или тексте ---
-def contains_keywords_in_text(url, keywords):
-    text = extract_text_from_url(url)
-    return any(kw.lower() in text for kw in keywords)
-
-# --- Поиск новостей ---
+# --- Поиск новостей за 7 дней ---
 def search_news(keywords):
     articles = []
 
-    # 1. NewsAPI
+    # 1. NewsAPI — за 7 дней
     if NEWSAPI_KEY and keywords:
+        from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
         try:
             url = "https://newsapi.org/v2/everything"
             params = {
                 'q': ' OR '.join(keywords),
+                'from': from_date,
                 'sortBy': 'publishedAt',
                 'pageSize': 50,
                 'apiKey': NEWSAPI_KEY
@@ -105,14 +104,16 @@ def search_news(keywords):
         except Exception as e:
             print(f"NewsAPI ошибка: {e}")
 
-    # 2. RSS — технические и научные источники
+    # 2. RSS — научные и технические источники
     try:
         feeds = {
             'habr': 'https://habr.com/ru/rss/technology/',
             'nplus1': 'https://nplus1.ru/rss',
             'engineering': 'https://www.engineering.com/rss',
             'techcrunch': 'https://techcrunch.com/feed/',
-            'wired': 'https://www.wired.com/feed/rss'
+            'wired': 'https://www.wired.com/feed/rss',
+            'xinhua': 'http://www.xinhuanet.com/rss/world.xml',
+            'sina': 'https://rss.sina.com.cn/news/china.xml'
         }
         for name, feed_url in feeds.items():
             try:
@@ -130,6 +131,47 @@ def search_news(keywords):
                 print(f"Ошибка RSS {name}: {e}")
     except Exception as e:
         print(f"Ошибка парсинга RSS: {e}")
+
+    # 3. YouTube (через RSS)
+    try:
+        yt_rss = f"https://www.youtube.com/feeds/videos.xml?user=TechInsider"
+        feed = feedparser.parse(yt_rss)
+        for entry in feed.entries:
+            title = entry.title.lower()
+            if any(kw.lower() in title for kw in keywords):
+                desc = entry.description.lower()
+                if is_technical_article(desc):
+                    articles.append({
+                        'title': entry.title,
+                        'url': entry.link,
+                        'source': 'YouTube',
+                        'published': entry.get('published', 'Неизвестно')
+                    })
+    except Exception as e:
+        print(f"Ошибка YouTube: {e}")
+
+    # 4. Дзен, Telegram, Instagram — через RSS или API (упрощённо)
+    try:
+        zen_feeds = [
+            'https://zen.yandex.ru/rss/technologies',
+            'https://zen.yandex.ru/rss/science'
+        ]
+        for feed_url in zen_feeds:
+            try:
+                feed = feedparser.parse(feed_url)
+                for entry in feed.entries:
+                    title = entry.title.lower()
+                    if any(kw.lower() in title for kw in keywords):
+                        articles.append({
+                            'title': entry.title,
+                            'url': entry.link,
+                            'source': 'Дзен',
+                            'published': entry.get('published', 'Неизвестно')
+                        })
+            except Exception as e:
+                print(f"Ошибка Дзен: {e}")
+    except Exception as e:
+        print(f"Ошибка Дзен: {e}")
 
     return articles
 
@@ -203,7 +245,7 @@ def main():
         return
 
     # Формируем сообщение
-    msg = f"<b>🔧 Технические новости по запросу:</b> <code>{', '.join(keywords)}</code>\n\n"
+    msg = f"<b>🔧 Технические новости за неделю по запросу:</b> <code>{', '.join(keywords)}</code>\n\n"
     for art in selected:
         title_ru = translate_text(art['title'])
         source = art.get('source', 'Неизвестно')
