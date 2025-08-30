@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 TOKEN = os.getenv("TOKEN")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 ADMIN_ID = os.getenv("ADMIN_ID")
-KEYWORDS_INPUT = os.getenv("KEYWORDS", "технологии, изобретения, AI")  # Из workflow
+KEYWORDS_INPUT = os.getenv("KEYWORDS", "технологии, изобретения, AI")
 
 # --- Кеш ---
 CACHE_FILE = "cache/news_cache.json"
@@ -77,7 +77,7 @@ def is_technical_article(text):
 def search_news(keywords):
     articles = []
 
-    # 1. NewsAPI — за 7 дней
+    # 1. NewsAPI
     if NEWSAPI_KEY and keywords:
         from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
         try:
@@ -112,8 +112,8 @@ def search_news(keywords):
             'engineering': 'https://www.engineering.com/rss',
             'techcrunch': 'https://techcrunch.com/feed/',
             'wired': 'https://www.wired.com/feed/rss',
-            'xinhua': 'http://www.xinhuanet.com/rss/world.xml',
-            'sina': 'https://rss.sina.com.cn/news/china.xml'
+            'tass': 'https://tass.ru/rss/v2.xml',
+            'xinhua': 'http://www.xinhuanet.com/rss/world.xml'
         }
         for name, feed_url in feeds.items():
             try:
@@ -132,44 +132,35 @@ def search_news(keywords):
     except Exception as e:
         print(f"Ошибка парсинга RSS: {e}")
 
-    # 3. YouTube (через RSS)
+    # 3. YouTube (описания)
     try:
-        yt_rss = f"https://www.youtube.com/feeds/videos.xml?user=TechInsider"
+        yt_rss = "https://www.youtube.com/feeds/videos.xml?user=Veritasium"
         feed = feedparser.parse(yt_rss)
         for entry in feed.entries:
-            title = entry.title.lower()
-            if any(kw.lower() in title for kw in keywords):
-                desc = entry.description.lower()
-                if is_technical_article(desc):
-                    articles.append({
-                        'title': entry.title,
-                        'url': entry.link,
-                        'source': 'YouTube',
-                        'published': entry.get('published', 'Неизвестно')
-                    })
+            desc = entry.description.lower()
+            if any(kw.lower() in desc for kw in keywords) and is_technical_article(desc):
+                articles.append({
+                    'title': entry.title,
+                    'url': entry.link,
+                    'source': 'YouTube',
+                    'published': entry.get('published', 'Неизвестно')
+                })
     except Exception as e:
         print(f"Ошибка YouTube: {e}")
 
-    # 4. Дзен, Telegram, Instagram — через RSS или API (упрощённо)
+    # 4. Дзен
     try:
-        zen_feeds = [
-            'https://zen.yandex.ru/rss/technologies',
-            'https://zen.yandex.ru/rss/science'
-        ]
-        for feed_url in zen_feeds:
-            try:
-                feed = feedparser.parse(feed_url)
-                for entry in feed.entries:
-                    title = entry.title.lower()
-                    if any(kw.lower() in title for kw in keywords):
-                        articles.append({
-                            'title': entry.title,
-                            'url': entry.link,
-                            'source': 'Дзен',
-                            'published': entry.get('published', 'Неизвестно')
-                        })
-            except Exception as e:
-                print(f"Ошибка Дзен: {e}")
+        zen_feed = "https://zen.yandex.ru/rss/technologies"
+        feed = feedparser.parse(zen_feed)
+        for entry in feed.entries:
+            title = entry.title.lower()
+            if any(kw.lower() in title for kw in keywords):
+                articles.append({
+                    'title': entry.title,
+                    'url': entry.link,
+                    'source': 'Дзен',
+                    'published': entry.get('published', 'Неизвестно')
+                })
     except Exception as e:
         print(f"Ошибка Дзен: {e}")
 
@@ -181,7 +172,6 @@ def send_message(chat_id, text, parse_mode='HTML', disable_preview=False):
         print("❌ chat_id не задан")
         return
     try:
-        # Экранирование для HTML
         text = text.replace('<', '<').replace('>', '>')
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         data = {
@@ -201,13 +191,10 @@ def send_message(chat_id, text, parse_mode='HTML', disable_preview=False):
 # --- Основная функция ---
 def main():
     print("🚀 Бот запущен (режим GitHub Actions)")
-
-    # Парсим ключевые слова
     keywords = [kw.strip() for kw in KEYWORDS_INPUT.split(',') if kw.strip()]
     print(f"🔍 Поиск по: {keywords}")
 
     if not keywords:
-        print("❌ Нет ключевых слов для поиска")
         if ADMIN_ID:
             send_message(ADMIN_ID, "❌ Не указаны ключевые слова для поиска.")
         return
@@ -217,7 +204,6 @@ def main():
     print(f"Получено статей: {len(raw_articles)}")
 
     if not raw_articles:
-        print("❌ Новости не найдены.")
         if ADMIN_ID:
             send_message(ADMIN_ID, "❌ Новости по заданным словам не найдены.")
         return
@@ -229,23 +215,22 @@ def main():
         if any(kw.lower() in text for kw in keywords) and is_technical_article(text):
             filtered_articles.append(art)
 
-    print(f"После фильтрации по техническим признакам: {len(filtered_articles)}")
+    print(f"После фильтрации: {len(filtered_articles)}")
 
     # Убираем дубли
     articles = [a for a in filtered_articles if a.get('url') not in seen_urls]
 
-    # Ограничиваем 20 новостями
+    # Ограничиваем 20
     selected = articles[:20]
     print(f"Отправляем: {len(selected)} новостей")
 
     if not selected:
-        print("Нет подходящих новостей.")
         if ADMIN_ID:
             send_message(ADMIN_ID, "📭 Нет технических новостей по вашим словам.")
         return
 
     # Формируем сообщение
-    msg = f"<b>🔧 Технические новости за неделю по запросу:</b> <code>{', '.join(keywords)}</code>\n\n"
+    msg = f"<b>🔧 Технические новости за неделю:</b> <code>{', '.join(keywords)}</code>\n\n"
     for art in selected:
         title_ru = translate_text(art['title'])
         source = art.get('source', 'Неизвестно')
@@ -266,6 +251,5 @@ def main():
 
     print("✅ Рассылка завершена.")
 
-# --- Запуск ---
 if __name__ == "__main__":
     main()
