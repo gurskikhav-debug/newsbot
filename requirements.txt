@@ -4,3 +4,4 @@ feedparser
 deep-translator>=1.11.3
 beautifulsoup4
 lxml
+yt-dlp
